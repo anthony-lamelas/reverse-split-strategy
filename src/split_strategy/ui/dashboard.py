@@ -162,7 +162,7 @@ def run_dashboard():
     three_days_ago = today - timedelta(days=3)
     
     # Create tabs for different views
-    tab1, tab2, tab3 = st.tabs(["Confirmed Splits", "Early Warnings", "Edgar splits"])
+    tab1, tab2, tab3 = st.tabs(["Confirmed Splits", "Early Warnings", "Action Center"])
     
     with tab1:
         if not recent_splits:
@@ -492,134 +492,141 @@ def run_dashboard():
             st.error(f"Error fetching Early EDGAR data: {e}")
 
     with tab3:
-        st.header("Edgar Splits (High AI Confidence)")
+        st.header("Action Center: Upcoming Trades")
         st.markdown("""
-        Announced reverse splits with **HIGH** confidence AI classifications.
-        - **Upcoming Splits**: Scheduled for today or in the future (soonest first, pending dates at the bottom).
-        - **Past Splits**: Scheduled before today (most recent first).
+        Consolidated view of all **confirmed upcoming splits** combined with their **SEC AI Confidence** scores.
+        Only trade the green **APPROVED** setups.
         """)
         
+        st.warning("""
+        **CRITICAL SAFETY FILTERS BEFORE ENTERING A TRADE:**
+        1. **1-Day Notice Rule:** You must have at least 1 full day of holding time. If you missed the announcement and the split is happening today/tomorrow, DO NOT ENTER.
+        2. **Gap-Up Rule:** If the stock is gapping up >30% in the pre-market on the morning you plan to enter, CANCEL THE TRADE.
+        """)
+        
+        # 1. Get upcoming splits from recent_splits
+        today = datetime.now().date()
+        upcoming_action = [s for s in recent_splits if s["split_date_obj"] >= today]
+        
+        # Sort chronologically
+        upcoming_action.sort(key=lambda x: x["split_date_obj"])
+        
+        # 2. Fetch EDGAR data to cross-reference AI Scores
         try:
-            early_splits = fetch_early_splits()
+            edgar_coll = get_collection(EDGAR_COLLECTION)
+            early_coll = get_collection(EARLY_WARNINGS_COLLECTION)
+        except Exception:
+            edgar_coll = None
+            early_coll = None
             
-            # Filter to HIGH confidence
-            high_conf_splits = [p for p in early_splits if str(p.get("confidence", "")).upper() == "HIGH"]
+        action_data = []
+        for s in upcoming_action:
+            tier = "MISSING"
+            summary = ""
+            announce_date = "N/A"
             
-            if not high_conf_splits:
-                st.info("No announced splits with high confidence found.")
-            else:
-                today = datetime.now().date()
-                
-                # Parse function for date extraction
-                def parse_effective_date(ed_val):
-                    if not ed_val or ed_val == "Pending":
-                        return None
-                    if isinstance(ed_val, datetime):
-                        return ed_val.date()
-                    if hasattr(ed_val, "date"):
-                        return ed_val.date()
-                    try:
-                        return datetime.strptime(str(ed_val)[:10], "%Y-%m-%d").date()
-                    except:
-                        return None
-                
-                # Split into upcoming and past
-                upcoming_splits = []
-                past_splits = []
-                
-                for p in high_conf_splits:
-                    parsed_date = parse_effective_date(p.get("effective_date"))
-                    if parsed_date is None or parsed_date >= today:
-                        upcoming_splits.append(p)
-                    else:
-                        past_splits.append(p)
-                
-                # Sort upcoming: chronologically ascending (soonest first), pending at the end
-                def sort_upcoming(x):
-                    parsed = parse_effective_date(x.get("effective_date"))
-                    if parsed is None:
-                        return (1, datetime.max.date())
-                    return (0, parsed)
-                
-                upcoming_splits.sort(key=sort_upcoming)
-                
-                # Sort past: chronologically descending (most recent first)
-                def sort_past(x):
-                    parsed = parse_effective_date(x.get("effective_date"))
-                    if parsed is None:
-                        return datetime.min.date()
-                    return parsed
-                
-                past_splits.sort(key=sort_past, reverse=True)
-                
-                # Helper to process data for display
-                def process_display_data(splits_list):
-                    display_list = []
-                    for p in splits_list:
-                        rounding = "?"
-                        if p.get("rounding_up") is True:
-                            rounding = "YES"
-                        elif p.get("rounding_up") is False:
-                            rounding = "NO"
+            # Check EARLY_WARNINGS_COLLECTION first (recent data)
+            if early_coll is not None:
+                # Some early_warnings tickers might end in 'W' or 'Z' but let's do a direct match first
+                early_docs = list(early_coll.find({"ticker": {"$regex": f"^{s['Symbol']}", "$options": "i"}}))
+                if early_docs:
+                    for doc in early_docs:
+                        doc_tier = str(doc.get("confidence", "")).upper()
+                        if doc_tier == "HIGH":
+                            tier = "HIGH"
+                            summary = doc.get("summary", "")
+                            announce_date = doc.get("filing_date", "N/A")
+                            if isinstance(announce_date, str) and len(announce_date) > 10:
+                                announce_date = announce_date[:10]
+                            # Fallback to AI rounding if missing
+                            if not s["Rounding"]:
+                                if doc.get("rounding_up") is True: s["Rounding"] = "YES"
+                                elif doc.get("rounding_up") is False: s["Rounding"] = "NO"
+                            break
+                        elif doc_tier == "MEDIUM" and tier != "HIGH":
+                            tier = "MEDIUM"
+                            summary = doc.get("summary", "")
+                            announce_date = doc.get("filing_date", "N/A")
+                            if isinstance(announce_date, str) and len(announce_date) > 10:
+                                announce_date = announce_date[:10]
+            
+            # Fallback to historical EDGAR_COLLECTION
+            if tier == "MISSING" and s["Has EDGAR"] and edgar_coll is not None:
+                edgar_docs = list(edgar_coll.find({"reverse_splits_id": s["reverse_splits_id"]}))
+                if edgar_docs:
+                    # Find highest tier
+                    for doc in edgar_docs:
+                        doc_tier = doc.get("tier", "C")
+                        if doc_tier == "A":
+                            tier = "HIGH"
+                            summary = doc.get("text_matches", {}).get("summary", "")
+                            announce_date = doc.get("filing_date", "N/A")
+                            if isinstance(announce_date, str) and len(announce_date) > 10:
+                                announce_date = announce_date[:10]
+                            break
+                        elif doc_tier == "B" and tier != "HIGH":
+                            tier = "MEDIUM"
+                            summary = doc.get("text_matches", {}).get("summary", "")
+                            announce_date = doc.get("filing_date", "N/A")
+                            if isinstance(announce_date, str) and len(announce_date) > 10:
+                                announce_date = announce_date[:10]
                             
-                        display_list.append({
-                            "Filing Date": p.get("filing_date"),
-                            "Ticker": p.get("ticker", "UNKNOWN"),
-                            "Company": p.get("company_name"),
-                            "Effective Date": p.get("effective_date", "Pending"),
-                            "Ratio": p.get("ratio", "?"),
-                            "Rounding": rounding,
-                            "Summary": p.get("summary", ""),
-                            "Confidence": "HIGH",
-                            "Link": p.get("filing_url")
-                        })
-                    
-                    df = pd.DataFrame(display_list)
-                    if not df.empty and "Filing Date" in df.columns:
-                        try:
-                            df["Filing Date"] = pd.to_datetime(df["Filing Date"])
-                        except:
-                            pass
-                    return df
-
-                st.subheader("Upcoming Edgar Splits")
-                if not upcoming_splits:
-                    st.info("No upcoming high confidence splits found.")
-                else:
-                    upcoming_df = process_display_data(upcoming_splits)
-                    st.dataframe(
-                        upcoming_df,
-                        column_config={
-                            "Link": st.column_config.LinkColumn("Filing URL", display_text="View Filing"),
-                            "Filing Date": st.column_config.DateColumn("Filing Date", format="YYYY-MM-DD"),
-                            "Summary": st.column_config.TextColumn("AI Summary", width="large", help="Full summary available on hover"),
-                            "Rounding": st.column_config.TextColumn("Rounding Up?", help="Does the filing explicitly state fractional shares are rounded up?"),
-                        },
-                        hide_index=True,
-                        use_container_width=True,
-                        height=350
-                    )
+            # Determine Action Badge
+            if tier == "HIGH":
+                badge = "🟢 APPROVED"
+            elif tier == "MEDIUM":
+                badge = "🟡 MARGINAL"
+            else:
+                badge = "🔴 SKIP"
                 
-                st.subheader("Past Edgar Splits")
-                if not past_splits:
-                    st.info("No past high confidence splits found.")
-                else:
-                    past_df = process_display_data(past_splits)
-                    st.dataframe(
-                        past_df,
-                        column_config={
-                            "Link": st.column_config.LinkColumn("Filing URL", display_text="View Filing"),
-                            "Filing Date": st.column_config.DateColumn("Filing Date", format="YYYY-MM-DD"),
-                            "Summary": st.column_config.TextColumn("AI Summary", width="large", help="Full summary available on hover"),
-                            "Rounding": st.column_config.TextColumn("Rounding Up?", help="Does the filing explicitly state fractional shares are rounded up?"),
-                        },
-                        hide_index=True,
-                        use_container_width=True,
-                        height=250
-                    )
-                    
-        except Exception as e:
-            st.error(f"Error fetching High Confidence Edgar splits: {e}")
+            action_data.append({
+                "Execution Date": s["split_date_obj_str"],
+                "Announce Date": announce_date,
+                "Ticker": s["Symbol"],
+                "Ratio": s["Split Ratio"],
+                "Rounding": s["Rounding"],
+                "AI Score": tier,
+                "Action": badge,
+                "Summary": summary
+            })
+            
+        if not action_data:
+            st.info("No upcoming splits on the radar right now.")
+        else:
+            action_df = pd.DataFrame(action_data)
+            
+            # Put APPROVED at the top, then sort by date
+            action_df["_sort_badge"] = action_df["Action"].apply(lambda x: 0 if "APPROVED" in x else (1 if "MARGINAL" in x else 2))
+            action_df = action_df.sort_values(by=["_sort_badge", "Execution Date"])
+            action_df = action_df.drop(columns=["_sort_badge"])
+            
+            st.dataframe(
+                action_df,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Summary": st.column_config.TextColumn("AI Summary", width="large")
+                },
+                height=350
+            )
+            
+        st.markdown("---")
+        st.subheader("Position Size Calculator")
+        st.markdown("Calculate your exact short position based on our mathematical **40% Stop-Loss** strategy rules.")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            account_size = st.number_input("Total Trading Account Size ($)", value=10000, step=1000)
+            risk_pct = st.number_input("Max Risk per Trade (%)", value=2.0, step=0.5, help="Percentage of your total account you are willing to lose on a single trade if stopped out.")
+            
+        with col2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            max_loss = account_size * (risk_pct / 100.0)
+            position_size = max_loss / 0.40
+            
+            st.info(f"**Max Acceptable Loss:** ${max_loss:,.2f}")
+            st.success(f"**Recommended Short Position Size:** ${position_size:,.2f}")
+            st.caption("*If you short this dollar amount and the stock violently pumps 40% against you hitting your hard stop, you will only lose your exact Max Acceptable Loss.*")
 
     # Refresh button
     st.markdown("---")

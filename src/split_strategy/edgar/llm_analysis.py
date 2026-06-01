@@ -38,21 +38,26 @@ def get_analysis_prompt(company: str, context: str, filing_date: str) -> str:
        - If the effective date is BEFORE or ON the filing date ({filing_date}), this is a PAST event.
        - If the text says the split "became effective" or "took effect", it is a PAST event.
        
-    2. **Confidence Score**:
-       - "High": Explicit confirmation of a **FUTURE** reverse split with a specific ratio and date.
-       - "Medium": Confirmed future split but missing exact date or ratio.
-       - "Low": Ambiguous language, mere proposal, or **PAST/ALREADY EFFECTIVE split**.
+    2. **Definitive Decision vs. Proposal/Discussion**:
+       - A **Definitive Split Announcement** means the Board has officially approved and decided to execute the reverse stock split. The split IS definitely happening and the board is announcing its execution date/ratio.
+       - A **Proposal/Discussion/Authorization Request** means the company is seeking shareholder approval, discussing a potential split at an upcoming meeting, proposing a range of ratios for future discretion, or seeking voting authority to allow the board to execute a split *if* they decide to later. The split is NOT yet a definitive decision to execute.
+       
+    3. **Confidence Score**:
+       - "High": Explicit confirmation that the split **IS definitely decided/happening** (definitive announcement of execution) with a specific ratio and date.
+       - "Medium": Confirmed definitive split that is definitely going to happen, but missing exact date or exact ratio.
+       - "Low": A mere proposal, meeting discussion, request for voting authority/discretion, or a PAST/ALREADY EFFECTIVE split.
     
     Text Context:
     {context}
     
     Return a JSON object with:
-    - "is_reverse_split": boolean (True if it IS a reverse split announcement)
+    - "is_reverse_split": boolean (True if it IS a reverse split document)
     - "is_future_split": boolean (True ONLY if effective date > {filing_date} or explicitly stated as future)
+    - "is_definitive_split_announcement": boolean (True ONLY if the split is a definitive decision to execute. False if it is a proposal, discussion, meeting authorization request, or seeking discretionary authority to execute a split in the future.)
     - "effective_date": string (YYYY-MM-DD or "Unknown")
     - "ratio": string (e.g., "1-for-10")
     - "rounding_up": boolean (True if fractional shares are rounded UP)
-    - "confidence": "High", "Medium", "Low" (Downgrade to Low if is_future_split is False)
+    - "confidence": "High", "Medium", "Low" (Downgrade to Low if is_future_split is False or if it is a mere proposal/discussion/authorization request rather than a definitive decision to execute)
     - "summary": One sentence summary (e.g. "1-for-10 split effective on [Date]").
     """
 
