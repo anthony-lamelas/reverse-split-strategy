@@ -43,3 +43,27 @@ HEADERS = {
     "Accept": "application/json, text/html"
 }
 
+# --- Schwab Trader API (automation) ---
+# Generate these in the Schwab developer portal (see docs/SCHWAB_SETUP.md).
+SCHWAB_APP_KEY = os.environ.get("SCHWAB_APP_KEY")
+SCHWAB_APP_SECRET = os.environ.get("SCHWAB_APP_SECRET")
+# Must exactly match the callback registered on the app; 127.0.0.1 loopback is typical.
+SCHWAB_CALLBACK_URL = os.environ.get("SCHWAB_CALLBACK_URL", "https://127.0.0.1:8182")
+# Where the OAuth token (access + 7-day refresh) is cached between runs.
+SCHWAB_TOKEN_PATH = os.environ.get("SCHWAB_TOKEN_PATH", str(ROOT_DIR / ".schwab_token.json"))
+# Optional: restrict trading to a specific account hash (else the first account is used).
+SCHWAB_ACCOUNT_HASH = os.environ.get("SCHWAB_ACCOUNT_HASH")
+
+# --- Trading / sizing defaults (mirror analysis/strategy.md + ui/dashboard.py) ---
+DEFAULT_ACCOUNT_SIZE = float(os.environ.get("ACCOUNT_SIZE", "10000"))
+TRADE_PCT = 0.05          # 5% of equity notional per trade
+STOP_LOSS_PCT = 0.40      # 40% hard stop (short: stop is above entry)
+MAX_GAP_UP_PCT = 0.30     # skip entry if it gaps up >30% vs prior close
+
+# Optional SMTP alerting for the daily signal run (all optional; no-op if unset).
+SMTP_HOST = os.environ.get("SMTP_HOST")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
+ALERT_EMAIL_TO = os.environ.get("ALERT_EMAIL_TO")
+

@@ -33,6 +33,16 @@ Thumbs.db
 .env.*
 !.env.example
 
+# Schwab OAuth token (contains access/refresh tokens - NEVER commit)
+.schwab_token.json
+*.schwab_token.json
+
+# Local price cache built by scripts/build_prices.py
+DATA/prices_recent.pkl
+
+# Daily signal run logs
+logs/signals_*.json
+
 # CSV backups (optional - uncomment if you don't want to track backups)
 # *_backup.csv
 

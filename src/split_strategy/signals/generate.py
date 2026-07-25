@@ -1,0 +1,187 @@
+"""Generate daily short-candidate signals from the early_edgar_splits scanner.
+
+Implements the chosen "Optimal Safe" strategy as a live signal:
+  - Enter short the morning AFTER the SEC announcement (filing_date).
+  - Exit at the open on the execution date (effective_date).
+  - Skip if the stock gaps up >30% at entry (retail momentum).
+  - Size at 5% of equity notional; 40% hard stop (above entry).
+
+A signal is "actionable" when today is on/after the first business day after the
+filing and strictly before the execution date. The generator ranks High-confidence,
+soonest-executing names first.
+
+Network is only touched when generate_signals() runs (for the live gap-up/price check).
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, asdict, field
+from typing import Optional
+
+import pandas as pd
+
+from ..database import get_collection, EARLY_WARNINGS_COLLECTION
+from ..backtest.events import parse_ratio, _to_ts
+from ..backtest.shortability import load_exchange_map, MAJOR_EXCHANGES
+from .. import config
+
+_CONF_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+@dataclass
+class Signal:
+    ticker: str
+    company_name: Optional[str]
+    filing_date: Optional[str]
+    effective_date: Optional[str]        # planned exit date
+    ratio: Optional[float]
+    confidence: Optional[str]
+    status: str                          # ENTER_NOW | UPCOMING | HOLDING
+    entry_date: Optional[str]            # first business day after filing
+    current_price: Optional[float] = None
+    prior_close: Optional[float] = None
+    gap_up_pct: Optional[float] = None
+    gap_up_ok: Optional[bool] = None     # False if it gapped up beyond the filter
+    exchange: Optional[str] = None
+    likely_shortable: Optional[bool] = None
+    notional: Optional[float] = None
+    shares: Optional[int] = None
+    stop_price: Optional[float] = None
+    max_loss: Optional[float] = None
+    notes: list = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def _next_business_day(ts: pd.Timestamp) -> pd.Timestamp:
+    nxt = ts + pd.Timedelta(days=1)
+    while nxt.weekday() >= 5:  # Sat/Sun
+        nxt += pd.Timedelta(days=1)
+    return nxt
+
+
+def _price_snapshot(ticker: str):
+    """Return (current_price, prior_close) using a short yfinance history.
+
+    current_price = latest available Open (approximates the entry open / premarket);
+    prior_close = the close of the session before the latest. Returns (None, None) on
+    failure (logged by caller). Kept self-contained to avoid returns.py's tz pitfalls.
+    """
+    try:
+        import yfinance as yf
+
+        hist = yf.Ticker(ticker).history(period="7d", auto_adjust=False)
+        if hist is None or hist.empty or len(hist) < 2:
+            return None, None
+        current = float(hist["Open"].iloc[-1])
+        prior_close = float(hist["Close"].iloc[-2])
+        return current, prior_close
+    except Exception:
+        return None, None
+
+
+def generate_signals(
+    account_size: Optional[float] = None,
+    as_of: Optional[pd.Timestamp] = None,
+    min_confidence: str = "High",
+    lookback_days: int = 7,
+    trade_pct: float = None,
+    stop_loss: float = None,
+    max_gap_up: float = None,
+    price_check: bool = True,
+) -> list[Signal]:
+    """Build ranked short-candidate signals actionable around `as_of`.
+
+    Args:
+        account_size: equity used for position sizing (defaults to config).
+        as_of: reference "today" (defaults to now).
+        min_confidence: minimum scanner confidence (High/Medium/Low).
+        lookback_days: how many days back a filing can be and still be actionable.
+        price_check: if True, fetch live prices to apply the gap-up filter and sizing.
+    """
+    account_size = config.DEFAULT_ACCOUNT_SIZE if account_size is None else account_size
+    trade_pct = config.TRADE_PCT if trade_pct is None else trade_pct
+    stop_loss = config.STOP_LOSS_PCT if stop_loss is None else stop_loss
+    max_gap_up = config.MAX_GAP_UP_PCT if max_gap_up is None else max_gap_up
+    as_of = pd.Timestamp.now().normalize() if as_of is None else pd.Timestamp(as_of).normalize()
+    min_rank = _CONF_RANK.get(min_confidence.lower(), 2)
+
+    exchange_map = load_exchange_map()
+    docs = list(get_collection(EARLY_WARNINGS_COLLECTION).find({}))
+
+    signals: list[Signal] = []
+    for d in docs:
+        ticker = d.get("ticker")
+        if not ticker or ticker == "UNKNOWN":
+            continue
+        if _CONF_RANK.get(str(d.get("confidence", "")).lower(), -1) < min_rank:
+            continue
+
+        t_ann = _to_ts(d.get("filing_date"))
+        t_split = _to_ts(d.get("effective_date"))
+        if pd.isna(t_ann) or pd.isna(t_split) or t_ann >= t_split:
+            continue
+        # Trade window must still be open (execution in the future) ...
+        if t_split <= as_of:
+            continue
+        # ... and the announcement recent enough to still be acting on.
+        if t_ann < as_of - pd.Timedelta(days=lookback_days):
+            continue
+
+        entry_date = _next_business_day(t_ann)
+        if as_of < entry_date:
+            status = "UPCOMING"
+        elif as_of == entry_date:
+            status = "ENTER_NOW"
+        else:
+            status = "HOLDING"  # already past ideal entry but trade window still open
+
+        exch = exchange_map.get(ticker.upper())
+        likely_shortable = (exch or "").lower() in MAJOR_EXCHANGES
+
+        sig = Signal(
+            ticker=ticker,
+            company_name=d.get("company_name"),
+            filing_date=str(d.get("filing_date")),
+            effective_date=str(d.get("effective_date")),
+            ratio=parse_ratio(d.get("ratio")),
+            confidence=d.get("confidence"),
+            status=status,
+            entry_date=str(entry_date.date()),
+            exchange=exch,
+            likely_shortable=bool(likely_shortable),
+        )
+        if not likely_shortable:
+            sig.notes.append(f"likely NOT shortable at Schwab (exchange={exch or 'unlisted'})")
+
+        if price_check:
+            cur, prior = _price_snapshot(ticker)
+            sig.current_price, sig.prior_close = cur, prior
+            if cur and prior and prior > 0:
+                gap = (cur - prior) / prior
+                sig.gap_up_pct = round(gap * 100, 2)
+                sig.gap_up_ok = gap <= max_gap_up
+                if not sig.gap_up_ok:
+                    sig.notes.append(f"SKIP: gapped up {sig.gap_up_pct:.1f}% (> {max_gap_up*100:.0f}%)")
+            if cur and cur > 0:
+                notional = account_size * trade_pct
+                sig.notional = round(notional, 2)
+                sig.shares = int(math.floor(notional / cur))
+                sig.stop_price = round(cur * (1 + stop_loss), 4)
+                sig.max_loss = round(notional * stop_loss, 2)
+                if cur < 1.0:
+                    # Sub-$1 is generally non-marginable / not shortable regardless of venue.
+                    sig.likely_shortable = False
+                    sig.notes.append("entry < $1.00 - typically non-marginable / not shortable")
+
+        signals.append(sig)
+
+    # Rank: actionable-now first, then confidence, then soonest execution.
+    status_rank = {"ENTER_NOW": 0, "HOLDING": 1, "UPCOMING": 2}
+    signals.sort(key=lambda s: (
+        status_rank.get(s.status, 3),
+        -_CONF_RANK.get((s.confidence or "").lower(), -1),
+        s.effective_date or "9999",
+    ))
+    return signals
