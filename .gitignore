@@ -37,8 +37,10 @@ Thumbs.db
 .schwab_token.json
 *.schwab_token.json
 
-# Local price cache built by scripts/build_prices.py
+# Local price caches (reproducible via scripts/build_prices.py, backtest_recent.py,
+# walk_forward_analysis.py) - large, not source data.
 DATA/prices_recent.pkl
+DATA/prices_full.pkl
 
 # Daily signal run logs
 logs/signals_*.json

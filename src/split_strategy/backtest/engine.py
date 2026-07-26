@@ -96,6 +96,7 @@ def neutralize_split(ticker_data: pd.DataFrame, t_split, ratio) -> pd.DataFrame:
         if col in adjusted.columns:
             adjusted.loc[mask, col] = adjusted.loc[mask, col] / factor
     if "Volume" in adjusted.columns:
+        adjusted["Volume"] = adjusted["Volume"].astype(float)
         adjusted.loc[mask, "Volume"] = adjusted.loc[mask, "Volume"] * factor
     return adjusted
 

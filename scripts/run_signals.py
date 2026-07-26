@@ -104,6 +104,8 @@ def main():
     ap.add_argument("--min-confidence", default="High", choices=["High", "Medium", "Low"])
     ap.add_argument("--lookback", type=int, default=7, help="max days since filing to still act on")
     ap.add_argument("--no-price-check", action="store_true", help="skip live price fetch (no gap-up filter/sizing)")
+    ap.add_argument("--no-schwab-check", action="store_true",
+                    help="skip the real Schwab shortability check even if a token is cached")
     args = ap.parse_args()
 
     if args.login:
@@ -128,6 +130,31 @@ def main():
         except SchwabAuthError as e:
             print(f"\n[live] cannot trade: {e}")
             sys.exit(1)
+
+    # Opportunistically enrich with REAL Schwab shortability (not the historical
+    # proxy) whenever a valid cached token exists - works in dry-run too, and never
+    # blocks the run if the token is missing/expired.
+    if not args.no_schwab_check:
+        if client is None:
+            try:
+                from split_strategy.broker.schwab_auth import get_client, SchwabAuthError
+                client = get_client(interactive=False)
+            except Exception:
+                client = None
+        if client is not None:
+            from split_strategy.signals.generate import enrich_with_schwab_shortability, log_shortability_ground_truth
+            enrich_with_schwab_shortability(signals, client)
+            n = log_shortability_ground_truth(signals, ROOT / "DATA" / "shortability_ground_truth.csv")
+            if n:
+                print(f"\nLogged real Schwab shortability for {n} ticker(s) -> DATA/shortability_ground_truth.csv")
+                for s in signals:
+                    if s.schwab_is_shortable is not None:
+                        agree = "match" if s.schwab_is_shortable == s.likely_shortable else "MISMATCH"
+                        htb = f", htb_rate={s.schwab_htb_rate}" if s.schwab_is_hard_to_borrow else ""
+                        print(f"  {s.ticker}: proxy={s.likely_shortable} schwab={s.schwab_is_shortable} "
+                             f"({agree}){htb}")
+        else:
+            print("\n(No cached Schwab token - skipping real shortability check. Run --login to enable it.)")
 
     mgr = OrderManager(mode=mode, client=client, account_hash=account_hash)
     actionable = [s for s in signals if s.status in ("ENTER_NOW", "HOLDING")]

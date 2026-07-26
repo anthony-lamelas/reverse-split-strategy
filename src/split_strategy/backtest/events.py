@@ -157,3 +157,32 @@ def build_events_from_tier_ab() -> pd.DataFrame:
         )
     df = pd.DataFrame(rows).dropna(subset=["t_ann", "t_split"])
     return df.sort_values("t_ann").reset_index(drop=True)
+
+
+def build_events_combined(as_of: Optional[pd.Timestamp] = None) -> pd.DataFrame:
+    """Union of the Tier A/B historical join and the early_edgar scanner.
+
+    Tier A/B (`build_events_from_tier_ab`) has the longest history (mid-2024 onward)
+    but the nightly EDGAR enrichment job that feeds it can lag, so recent months are
+    thin there. `early_edgar_splits` is the live scanner's own source and stays
+    current. Unioning both gives the fullest, most current event set for walk-forward
+    testing. On overlap (same ticker + same execution date), the Tier A/B row is kept
+    (it has a cross-validated, exact ratio); the early_edgar-only rows fill in the gap
+    at the recent end.
+    """
+    tab = build_events_from_tier_ab()
+    early = build_events_from_early_edgar(require_executed=True, as_of=as_of)
+
+    if tab.empty:
+        return early
+    if early.empty:
+        return tab
+
+    tab_keys = set(zip(tab["ticker"], tab["t_split"].dt.date))
+    early_only = early[~early.apply(lambda r: (r["ticker"], r["t_split"].date()) in tab_keys, axis=1)]
+
+    combined = pd.concat([tab[["ticker", "t_ann", "t_split", "ratio"]],
+                          early_only[["ticker", "t_ann", "t_split", "ratio"]]], ignore_index=True)
+    combined = combined.dropna(subset=["t_ann", "t_split"])
+    combined = combined.sort_values("t_ann").drop_duplicates(subset=["ticker", "t_split"], keep="first")
+    return combined.reset_index(drop=True)

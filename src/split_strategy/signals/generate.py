@@ -43,7 +43,10 @@ class Signal:
     gap_up_pct: Optional[float] = None
     gap_up_ok: Optional[bool] = None     # False if it gapped up beyond the filter
     exchange: Optional[str] = None
-    likely_shortable: Optional[bool] = None
+    likely_shortable: Optional[bool] = None       # our historical proxy classifier's guess
+    schwab_is_shortable: Optional[bool] = None    # real, live Schwab data (None = not checked)
+    schwab_is_hard_to_borrow: Optional[bool] = None
+    schwab_htb_rate: Optional[float] = None       # annualized borrow fee %, from Schwab
     notional: Optional[float] = None
     shares: Optional[int] = None
     stop_price: Optional[float] = None
@@ -185,3 +188,61 @@ def generate_signals(
         s.effective_date or "9999",
     ))
     return signals
+
+
+def enrich_with_schwab_shortability(signals: list[Signal], client) -> list[Signal]:
+    """Fill in real Schwab shortability data (requires an authenticated client).
+
+    Best-effort: on any failure a signal's schwab_* fields just stay None (unknown),
+    never silently treated as shortable or unshortable.
+    """
+    from ..broker.schwab_market_data import get_shortability_batch
+
+    tickers = [s.ticker for s in signals if s.ticker]
+    if not tickers:
+        return signals
+    results = get_shortability_batch(client, tickers)
+    for s in signals:
+        r = results.get(s.ticker)
+        if not r:
+            continue
+        s.schwab_is_shortable = r.get("is_shortable")
+        s.schwab_is_hard_to_borrow = r.get("is_hard_to_borrow")
+        s.schwab_htb_rate = r.get("htb_rate")
+    return signals
+
+
+def log_shortability_ground_truth(signals: list[Signal], log_path) -> int:
+    """Append a row per signal with schwab_* data populated to a growing CSV, building
+    a real ground-truth dataset over time to validate the historical proxy classifier
+    in backtest/shortability.py. Returns the number of rows appended (0 if none had
+    Schwab data checked).
+    """
+    import csv
+    from pathlib import Path
+
+    rows = [s for s in signals if s.schwab_is_shortable is not None]
+    if not rows:
+        return 0
+
+    log_path = Path(log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    is_new = not log_path.exists()
+    fieldnames = ["logged_at", "ticker", "confidence", "entry_price", "exchange",
+                 "proxy_likely_shortable", "schwab_is_shortable", "schwab_is_hard_to_borrow",
+                 "schwab_htb_rate"]
+    with open(log_path, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        if is_new:
+            w.writeheader()
+        now = pd.Timestamp.now().isoformat()
+        for s in rows:
+            w.writerow(dict(
+                logged_at=now, ticker=s.ticker, confidence=s.confidence,
+                entry_price=s.current_price, exchange=s.exchange,
+                proxy_likely_shortable=s.likely_shortable,
+                schwab_is_shortable=s.schwab_is_shortable,
+                schwab_is_hard_to_borrow=s.schwab_is_hard_to_borrow,
+                schwab_htb_rate=s.schwab_htb_rate,
+            ))
+    return len(rows)
