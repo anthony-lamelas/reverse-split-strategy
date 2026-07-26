@@ -8,12 +8,51 @@ Each issue has a **severity** (Critical / High / Medium / Low) and a `file:line`
 
 ---
 
-## TL;DR — the five that matter
+## TL;DR — the six that matter
+0. **🔴 THE REVERSE-SPLIT JUMP IS NEVER NEUTRALIZED** (notebook grid + `test_backtest.py`) — see §0. This is the single most damaging bug found: it turns winning trades into phantom 40% stop-outs. Discovered and fixed in `backtest/engine.py`; the original notebook remains affected.
 1. **Backtest look-ahead entry + entry-day stop exclusion** (`scripts/test_backtest.py:49-62`, and the notebook grid) — the backtested edge is optimistic and not reproducible live.
 2. **No borrow modeling + survivorship + possibly split-adjusted prices** (`scripts/test_backtest.py:21,68`) — the edge may be partly an artifact of untradeable names and adjusted price paths.
 3. **EDGAR `filings.recent`-only fetch** (`src/split_strategy/edgar/processing.py:192`) — silently drops paginated filings, so the announcement date (`t_ann`) the whole strategy keys on can be wrong or missing for older/high-volume filers.
 4. **Fake SEC User-Agent** (`src/split_strategy/config.py:30`, `.github/workflows/nightly-scrape.yml`) — violates SEC fair-access policy; risks an IP ban for the entire automated pipeline.
 5. **Near-zero automated test coverage** — only regex helpers are tested; the scoring and backtest math have no tests.
+
+---
+
+## 0. 🔴 CRITICAL: the mechanical reverse-split jump is treated as a real price move
+
+**Severity: Critical.** This invalidates any backtest whose holding period spans the split
+date — which, for the `day_of_split` strategy, is **every single trade**.
+
+**The mechanics.** A 1-for-10 reverse split multiplies the quoted price by 10 overnight.
+It does **not** hurt a short position: the broker divides your share count by the same
+factor, so position value is unchanged. Short 100 sh @ $0.72 ($72 notional) → after the
+split you owe 10 sh @ ~$7.20 → still $72. P&L impact: zero.
+
+**The bug.** The backtest compares raw quoted prices across the split boundary, so it sees
+a **+900% adverse move** and fires a catastrophic stop-loss on a trade that was actually fine.
+
+**Why neither yfinance mode saves you.** Verified empirically on BANL (1-for-13, eff.
+2026-07-20) and APUS (1-for-10, eff. 2026-07-24): the ~10x jump is present with
+`auto_adjust=False` **and** `auto_adjust=True`. Yahoo simply has not recorded these
+micro-cap reverse splits in its adjustment table. Issue 1.5 below (adjusted-price concern)
+is therefore *necessary but not sufficient* — you must neutralize the split yourself.
+
+**Measured impact** (last-60d window, 49 trades):
+
+| | Win rate | Total return | Stop-outs |
+|---|---:|---:|---:|
+| Uncorrected (original behavior) | 51.0% | −7.54% | 7 |
+| Split-neutralized (correct) | **55.1%** | **+2.38%** | 5 |
+
+Two trades flipped from phantom −41.5% stop-outs to real winners: **APUS +7.4%**, **BANL +16.9%**.
+
+**Fix.** `neutralize_split()` in `src/split_strategy/backtest/engine.py` divides prices on/after
+the effective date by the declared EDGAR ratio (guarded so already-adjusted series aren't
+double-adjusted). Enabled by default via `adjust_for_split=True`.
+
+**Still outstanding:** `analysis/strategy.ipynb` and `scripts/test_backtest.py` were **not**
+modified (validation is report-only), so **the published 574-trade / 60.97% result is still
+computed with this bug present** and should be regarded as unreliable until re-run.
 
 ---
 

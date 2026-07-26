@@ -42,6 +42,64 @@ CHOSEN_STRATEGY = dict(
 )
 
 
+def neutralize_split(ticker_data: pd.DataFrame, t_split, ratio) -> pd.DataFrame:
+    """Remove the mechanical reverse-split price jump from an OHLC frame.
+
+    WHY THIS IS REQUIRED: a reverse split multiplies the quoted price by the split
+    factor overnight (1-for-10 => price x10), but it does NOT hurt a short position —
+    the broker divides your share count by the same factor, so the position value is
+    unchanged. Yahoo/yfinance frequently does NOT record micro-cap reverse splits in
+    its adjustment table, so BOTH auto_adjust=True and auto_adjust=False leave the raw
+    jump in the series. Left uncorrected, the backtest reads a 1-for-10 split as a
+    +900% adverse move and fires a catastrophic false stop-loss.
+
+    Fix: divide prices on/after the effective date by the split factor, making the
+    series economically continuous (i.e. expressed in pre-split share terms).
+
+    The adjustment is applied only when a jump consistent with the split is actually
+    observed, so already-adjusted series are not double-adjusted.
+
+    Returns a copy; the input is not mutated.
+    """
+    if pd.isna(t_split):
+        return ticker_data
+
+    before = ticker_data[ticker_data.index < t_split]
+    on_after = ticker_data[ticker_data.index >= t_split]
+    if before.empty or on_after.empty:
+        return ticker_data
+
+    prev_close = before["Close"].iloc[-1]
+    first_open = on_after["Open"].iloc[0]
+    if not (pd.notna(prev_close) and pd.notna(first_open) and prev_close > 0):
+        return ticker_data
+
+    observed_jump = first_open / prev_close
+
+    # Decide the factor to divide by.
+    factor = None
+    if pd.notna(ratio) and ratio and ratio > 1:
+        # Declared ratio available: apply it if a broadly consistent jump is present.
+        # Real trading moves alongside the split, so allow a wide tolerance band.
+        if observed_jump >= ratio * 0.5:
+            factor = float(ratio)
+    if factor is None and observed_jump >= 1.8:
+        # No usable declared ratio, but an unmistakable mechanical jump: use observed.
+        factor = float(observed_jump)
+
+    if factor is None or factor <= 1:
+        return ticker_data  # already adjusted, or no split jump present
+
+    adjusted = ticker_data.copy()
+    mask = adjusted.index >= t_split
+    for col in ("Open", "High", "Low", "Close"):
+        if col in adjusted.columns:
+            adjusted.loc[mask, col] = adjusted.loc[mask, col] / factor
+    if "Volume" in adjusted.columns:
+        adjusted.loc[mask, "Volume"] = adjusted.loc[mask, "Volume"] * factor
+    return adjusted
+
+
 def _holding_window(future_data: pd.DataFrame, entry_date, t_split, hold_rule):
     """Return the slice of bars used for the holding period, per the hold rule.
 
@@ -83,6 +141,7 @@ def backtest_mega(
     trade_pct: float = 0.05,
     slippage_and_fees: float = 0.015,
     entry_offset: int = 0,
+    adjust_for_split: bool = True,
 ) -> pd.DataFrame:
     """Run the short strategy over `df_events` using the `prices` OHLCV panel.
 
@@ -92,6 +151,9 @@ def backtest_mega(
             DatetimeIndex. `prices[ticker]['Open'/'High'/'Low'/'Close']`.
         entry_offset: 0 = enter at first session on/after t_ann (faithful to notebook);
             1 = enter at the next session (realistic "morning after").
+        adjust_for_split: neutralize the mechanical reverse-split price jump (default
+            True, and required for correctness). Set False only to reproduce the
+            original notebook's buggy behavior for comparison.
 
     Returns:
         A DataFrame with one row per executed trade, including ticker, entry/exit
@@ -124,6 +186,11 @@ def backtest_mega(
         ticker_data = prices[ticker].dropna(how="all")
         if ticker_data.empty:
             continue
+
+        # Remove the mechanical reverse-split jump; a short is not harmed by a split
+        # because the broker adjusts share count too. See neutralize_split().
+        if adjust_for_split:
+            ticker_data = neutralize_split(ticker_data, row["t_split"], ratio)
 
         # --- Entry: Open of the (entry_offset-th) session on/after the announcement ---
         future_data = ticker_data[ticker_data.index >= row["t_ann"]]

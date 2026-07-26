@@ -45,10 +45,16 @@ HEADERS = {
 
 # --- Schwab Trader API (automation) ---
 # Generate these in the Schwab developer portal (see docs/SCHWAB_SETUP.md).
-SCHWAB_APP_KEY = os.environ.get("SCHWAB_APP_KEY")
-SCHWAB_APP_SECRET = os.environ.get("SCHWAB_APP_SECRET")
+# Both naming conventions are accepted: SCHWAB_APP_KEY/SCHWAB_APP_SECRET (used in
+# docs) or the portal's own CLIENT_ID/CLIENT_SECRET wording.
+SCHWAB_APP_KEY = os.environ.get("SCHWAB_APP_KEY") or os.environ.get("CLIENT_ID")
+SCHWAB_APP_SECRET = os.environ.get("SCHWAB_APP_SECRET") or os.environ.get("CLIENT_SECRET")
 # Must exactly match the callback registered on the app; 127.0.0.1 loopback is typical.
-SCHWAB_CALLBACK_URL = os.environ.get("SCHWAB_CALLBACK_URL", "https://127.0.0.1:8182")
+SCHWAB_CALLBACK_URL = (
+    os.environ.get("SCHWAB_CALLBACK_URL")
+    or os.environ.get("CALLBACK_URL")
+    or "https://127.0.0.1:8182"
+)
 # Where the OAuth token (access + 7-day refresh) is cached between runs.
 SCHWAB_TOKEN_PATH = os.environ.get("SCHWAB_TOKEN_PATH", str(ROOT_DIR / ".schwab_token.json"))
 # Optional: restrict trading to a specific account hash (else the first account is used).

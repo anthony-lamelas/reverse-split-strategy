@@ -11,8 +11,8 @@ _Generated 2026-07-25 · window = last 60 days · source = `early_edgar_splits`_
 
 ## 1. All signals (baseline)
 
-- **Realistic (next-day entry):** trades=49, win_rate=51.0%, total_return=-7.54%, avg=-3.09%, median=+0.79%, maxDD=-11.04%
-- Optimistic (same-day entry, look-ahead): trades=58, win_rate=50.0%, total_return=-0.98%, avg=-0.20%, median=-0.02%, maxDD=-9.66%
+- **Realistic (next-day entry):** trades=49, win_rate=55.1%, total_return=+2.38%, avg=+1.08%, median=+1.80%, maxDD=-9.18%
+- Optimistic (same-day entry, look-ahead): trades=58, win_rate=53.4%, total_return=+8.33%, avg=+2.90%, median=+0.57%, maxDD=-8.71%
 
 ## 2. Shortability breakdown (Schwab realism)
 
@@ -20,8 +20,8 @@ _Generated 2026-07-25 · window = last 60 days · source = `early_edgar_splits`_
 
 | Subset | Trades | Win rate | Sum P&L ($) | Avg return |
 |---|---:|---:|---:|---:|
-| Shortable (tradeable) | 21 | 61.9% | -119.13 | -1.07% |
-| Likely unshortable | 28 | 42.9% | -634.68 | -4.60% |
+| Shortable (tradeable) | 21 | 61.9% | -110.08 | -1.07% |
+| Likely unshortable | 28 | 50.0% | +347.86 | +2.70% |
 
 Primary unshortable reason (by category):
 - thin liquidity (no locate): 16
@@ -64,12 +64,12 @@ Re-run of the strategy restricted to the tradeable subset (portfolio compounding
 | BMGL | 2026-06-11 | 2026-06-22 | 6.36 | 6.92 | time_exit | -10.3% | yes |
 | MQ | 2026-06-12 | 2026-06-30 | 15.12 | 16.68 | time_exit | -11.8% | yes |
 | AIFU | 2026-06-15 | 2026-06-16 | 55.60 | 56.55 | time_exit | -3.2% | no |
-| JBDI | 2026-06-18 | 2026-06-25 | 1.22 | 1.19 | time_exit | +1.1% | no |
+| JBDI | 2026-06-18 | 2026-06-25 | 1.22 | 0.59 | time_exit | +49.8% | no |
 | UVIX | 2026-06-18 | 2026-07-01 | 66.20 | 63.11 | time_exit | +3.2% | yes |
 | MNDR | 2026-06-22 | 2026-06-29 | 3.60 | 3.00 | time_exit | +15.2% | no |
 | ALIT | 2026-06-22 | 2026-06-30 | 11.36 | 11.10 | time_exit | +0.8% | yes |
 | FCUV | 2026-06-22 | 2026-06-23 | 2.40 | 3.35 | stop_loss | -41.5% | yes |
-| JBDI | 2026-06-24 | 2026-06-29 | 1.14 | 1.10 | time_exit | +2.0% | no |
+| JBDI | 2026-06-24 | 2026-06-29 | 1.14 | 0.55 | time_exit | +50.3% | no |
 | NAMI | 2026-06-24 | 2026-06-25 | 4.80 | 4.61 | time_exit | +2.5% | yes |
 | RUBI | 2026-06-24 | 2026-06-26 | 7.80 | 5.84 | time_exit | +23.6% | yes |
 | SRXH | 2026-06-25 | 2026-07-06 | 5.46 | 4.90 | time_exit | +8.8% | yes |
@@ -80,10 +80,10 @@ Re-run of the strategy restricted to the tradeable subset (portfolio compounding
 | ENLV | 2026-07-08 | 2026-07-09 | 7.09 | 6.86 | time_exit | +1.8% | no |
 | YMAT | 2026-07-09 | 2026-07-10 | 2.38 | 2.18 | time_exit | +6.7% | yes |
 | JEM | 2026-07-10 | 2026-07-14 | 8.50 | 6.32 | time_exit | +24.1% | yes |
-| APUS | 2026-07-14 | 2026-07-24 | 0.72 | 1.01 | stop_loss | -41.5% | no |
+| APUS | 2026-07-14 | 2026-07-24 | 0.72 | 0.66 | time_exit | +7.4% | no |
 | AMZE | 2026-07-16 | 2026-07-23 | 0.09 | 0.09 | time_exit | -1.5% | no |
 | QH | 2026-07-16 | 2026-07-17 | 6.14 | 7.05 | time_exit | -16.3% | no |
-| BANL | 2026-07-17 | 2026-07-20 | 0.36 | 0.50 | stop_loss | -41.5% | no |
+| BANL | 2026-07-17 | 2026-07-20 | 0.36 | 0.29 | time_exit | +16.9% | no |
 | XPON | 2026-07-17 | 2026-07-21 | 3.88 | 2.77 | time_exit | +27.0% | no |
 | SBEV | 2026-07-17 | 2026-07-23 | 0.09 | 0.09 | time_exit | -1.5% | no |
 | MSS | 2026-07-21 | 2026-07-22 | 2.15 | 2.64 | time_exit | -24.3% | no |
