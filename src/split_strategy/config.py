@@ -76,6 +76,10 @@ MAX_EXPOSURE = float(os.environ.get("MAX_EXPOSURE", "1.0"))
 SMTP_HOST = os.environ.get("SMTP_HOST")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("SMTP_USER")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
+# Gmail displays App Passwords grouped with spaces ("abcd efgh ijkl mnop") for
+# readability, but the real credential has none - strip them so a copy-paste that
+# includes the spaces doesn't silently fail auth.
+_smtp_password_raw = os.environ.get("SMTP_PASSWORD")
+SMTP_PASSWORD = _smtp_password_raw.replace(" ", "").strip() if _smtp_password_raw else None
 ALERT_EMAIL_TO = os.environ.get("ALERT_EMAIL_TO")
 
