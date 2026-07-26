@@ -1,0 +1,6 @@
+logged_at,ticker,confidence,entry_price,exchange,proxy_likely_shortable,schwab_is_shortable,schwab_is_hard_to_borrow,schwab_htb_rate
+2026-07-26T00:20:57.540976,WHLRL,High,,Nasdaq,True,True,True,-6.25
+2026-07-26T00:20:57.540976,SGLY,High,0.25699999928474426,Nasdaq,False,True,True,-5.25
+2026-07-26T00:20:57.540976,PMI,High,0.08799999952316284,NYSE,False,True,True,-16.25
+2026-07-26T00:20:57.540976,MVIS,High,0.2815000116825104,Nasdaq,False,True,True,-9.0
+2026-07-26T00:20:57.540976,NEXRW,High,,Nasdaq,True,True,True,-10.0
