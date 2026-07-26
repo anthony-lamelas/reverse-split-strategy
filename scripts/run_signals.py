@@ -24,6 +24,7 @@ sys.path.append(str(ROOT / "src"))
 
 from split_strategy import config
 from split_strategy.signals.generate import generate_signals
+from split_strategy.signals import portfolio_state
 from split_strategy.broker.schwab_orders import OrderManager, OrderMode
 
 
@@ -31,18 +32,18 @@ def _print_table(signals):
     if not signals:
         print("No actionable signals today.")
         return
-    cols = ["status", "ticker", "conf", "entry", "exit", "price", "gap%", "shares", "stop", "shortable", "notes"]
-    print(f"\n{'STATUS':<10}{'TKR':<8}{'CONF':<7}{'ENTRY':<12}{'EXIT':<12}{'PRICE':>8}{'GAP%':>7}{'SHARES':>8}{'STOP':>9}  SHORTABLE  NOTES")
-    print("-" * 120)
+    print(f"\n{'STATUS':<10}{'TKR':<8}{'CONF':<7}{'ENTRY':<12}{'EXIT':<12}{'PRICE':>8}{'GAP%':>7}{'SHARES':>8}{'STOP':>9}  SHORTABLE  CAP  NOTES")
+    print("-" * 128)
     for s in signals:
         price = f"{s.current_price:.2f}" if s.current_price else "-"
         gap = f"{s.gap_up_pct:+.1f}" if s.gap_up_pct is not None else "-"
         shares = str(s.shares) if s.shares else "-"
         stop = f"{s.stop_price:.2f}" if s.stop_price else "-"
         short = "yes" if s.likely_shortable else "NO"
+        cap = "OK" if s.capital_ok else ("NO" if s.capital_ok is False else "-")
         note = s.notes[0] if s.notes else ""
         print(f"{s.status:<10}{s.ticker:<8}{(s.confidence or '')[:4]:<7}{s.entry_date or '-':<12}"
-              f"{s.effective_date or '-':<12}{price:>8}{gap:>7}{shares:>8}{stop:>9}  {short:<9}  {note}")
+              f"{s.effective_date or '-':<12}{price:>8}{gap:>7}{shares:>8}{stop:>9}  {short:<9}  {cap:<3}  {note}")
 
 
 def _write_log(signals, order_results, mode):
@@ -106,21 +107,39 @@ def main():
     ap.add_argument("--no-price-check", action="store_true", help="skip live price fetch (no gap-up filter/sizing)")
     ap.add_argument("--no-schwab-check", action="store_true",
                     help="skip the real Schwab shortability check even if a token is cached")
+    ap.add_argument("--max-exposure", type=float, default=None,
+                    help="cap on total committed notional as a fraction of account size (default: config.MAX_EXPOSURE)")
     args = ap.parse_args()
 
     if args.login:
         sys.exit(do_login())
+
+    mode = OrderMode.LIVE if args.live else OrderMode.DRY_RUN
+
+    # Portfolio ledger: how much capital is already committed to other still-open
+    # positions, so this run doesn't size a new signal as if it had the WHOLE account
+    # free (trades routinely overlap - see docs/VALIDATION_REPORT.md). Dry-run and live
+    # use separate ledgers so paper-testing never contaminates real capital tracking.
+    ledger_path = ROOT / "DATA" / (f"open_positions_{'live' if args.live else 'dryrun'}.json")
+    positions = portfolio_state.load_positions(ledger_path)
+    positions, n_closed = portfolio_state.prune_closed(positions)
+    committed = portfolio_state.committed_capital(positions)
+    if n_closed:
+        print(f"Freed capital: {n_closed} position(s) past their planned exit date.")
+    print(f"Currently committed: ${committed:,.0f} across {len(positions)} open position(s) "
+         f"(ledger: {ledger_path.name})")
 
     signals = generate_signals(
         account_size=args.account,
         min_confidence=args.min_confidence,
         lookback_days=args.lookback,
         price_check=not args.no_price_check,
+        existing_committed=committed,
+        max_exposure=args.max_exposure,
     )
     _print_table(signals)
 
     # Order construction
-    mode = OrderMode.LIVE if args.live else OrderMode.DRY_RUN
     client = account_hash = None
     if mode == OrderMode.LIVE:
         from split_strategy.broker.schwab_auth import get_client, resolve_account_hash, SchwabAuthError
@@ -161,6 +180,11 @@ def main():
     for s in actionable:
         res = mgr.process(s)
         print(f"  [{res.outcome}] {res.ticker}: {res.detail}")
+        if res.outcome in ("WOULD_PLACE", "SUBMITTED"):
+            positions = portfolio_state.add_position(positions, s.ticker, s.entry_date,
+                                                      s.effective_date, s.notional or 0)
+
+    portfolio_state.save_positions(ledger_path, positions)
 
     log_path = _write_log(signals, mgr.results, mode.value)
     summ = mgr.summary()

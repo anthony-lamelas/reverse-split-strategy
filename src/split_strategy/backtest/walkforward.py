@@ -96,6 +96,7 @@ def walk_forward(
         results.append(dict(
             test_start=test_start, test_end=test_end,
             in_sample_n=len(in_sample), out_sample_n=len(out_sample),
+            out_sample_events=out_sample,
             selected_params=params,
             in_sample_metric_value=best[selection_metric],
             in_sample_summary={k: best[k] for k in

@@ -51,6 +51,8 @@ class Signal:
     shares: Optional[int] = None
     stop_price: Optional[float] = None
     max_loss: Optional[float] = None
+    capital_ok: Optional[bool] = None    # False = would exceed the max-exposure cap given
+                                          # capital already committed to other open positions
     notes: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -93,6 +95,8 @@ def generate_signals(
     stop_loss: float = None,
     max_gap_up: float = None,
     price_check: bool = True,
+    existing_committed: float = 0.0,
+    max_exposure: Optional[float] = None,
 ) -> list[Signal]:
     """Build ranked short-candidate signals actionable around `as_of`.
 
@@ -102,11 +106,20 @@ def generate_signals(
         min_confidence: minimum scanner confidence (High/Medium/Low).
         lookback_days: how many days back a filing can be and still be actionable.
         price_check: if True, fetch live prices to apply the gap-up filter and sizing.
+        existing_committed: notional $ already tied up in other still-open positions
+            (from the portfolio ledger) - counted against the exposure cap before any
+            new signal here is allocated capital.
+        max_exposure: cap on TOTAL committed notional as a fraction of account_size
+            (defaults to config.MAX_EXPOSURE). Signals are allocated capital in ranked
+            order (actionable-now, then confidence, then soonest execution); once the
+            cap is hit, remaining signals are flagged capital_ok=False and excluded
+            from order construction, not silently over-allocated.
     """
     account_size = config.DEFAULT_ACCOUNT_SIZE if account_size is None else account_size
     trade_pct = config.TRADE_PCT if trade_pct is None else trade_pct
     stop_loss = config.STOP_LOSS_PCT if stop_loss is None else stop_loss
     max_gap_up = config.MAX_GAP_UP_PCT if max_gap_up is None else max_gap_up
+    max_exposure = config.MAX_EXPOSURE if max_exposure is None else max_exposure
     as_of = pd.Timestamp.now().normalize() if as_of is None else pd.Timestamp(as_of).normalize()
     min_rank = _CONF_RANK.get(min_confidence.lower(), 2)
 
@@ -187,6 +200,27 @@ def generate_signals(
         -_CONF_RANK.get((s.confidence or "").lower(), -1),
         s.effective_date or "9999",
     ))
+
+    # Capital allocation: consume the exposure budget in ranked order. A signal that
+    # would push total committed notional over the cap is flagged capital_ok=False
+    # rather than sized anyway - prevents the "unlimited buying power" bug where every
+    # signal gets a fresh 5% of total equity regardless of what's already committed to
+    # other open positions (trades routinely overlap; see docs/VALIDATION_REPORT.md).
+    exposure_cap = max_exposure * account_size
+    committed = existing_committed
+    for s in signals:
+        if s.status not in ("ENTER_NOW", "HOLDING"):
+            continue
+        if not s.shares or s.shares <= 0 or s.gap_up_ok is False:
+            continue  # already excluded by other filters; don't consume budget on it
+        if committed + (s.notional or 0) <= exposure_cap:
+            s.capital_ok = True
+            committed += (s.notional or 0)
+        else:
+            s.capital_ok = False
+            s.notes.append(f"SKIPPED: capital constrained (committed ${committed:,.0f} "
+                          f"of ${exposure_cap:,.0f} cap)")
+
     return signals
 
 

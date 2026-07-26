@@ -65,6 +65,12 @@ DEFAULT_ACCOUNT_SIZE = float(os.environ.get("ACCOUNT_SIZE", "10000"))
 TRADE_PCT = 0.05          # 5% of equity notional per trade
 STOP_LOSS_PCT = 0.40      # 40% hard stop (short: stop is above entry)
 MAX_GAP_UP_PCT = 0.30     # skip entry if it gaps up >30% vs prior close
+# Max total notional committed across ALL concurrently open positions, as a fraction
+# of account equity. Trades routinely overlap (backtest found a median of 13-55
+# concurrent positions), so without this cap, position sizing silently assumes
+# unlimited buying power. 1.0 = fully cash-collateralized, the realistic ceiling for
+# non-marginable short sales (most of these microcaps). See docs/VALIDATION_REPORT.md.
+MAX_EXPOSURE = float(os.environ.get("MAX_EXPOSURE", "1.0"))
 
 # Optional SMTP alerting for the daily signal run (all optional; no-op if unset).
 SMTP_HOST = os.environ.get("SMTP_HOST")

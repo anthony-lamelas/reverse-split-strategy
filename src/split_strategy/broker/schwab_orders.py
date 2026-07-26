@@ -63,6 +63,8 @@ class OrderManager:
             return f"gap-up filter ({signal.gap_up_pct:.1f}%)"
         if signal.status == "UPCOMING":
             return "not yet at entry date"
+        if signal.capital_ok is False:
+            return "capital constrained (exposure cap reached by higher-ranked signals)"
         return None
 
     def process(self, signal: Signal, order_type: str = "MARKET") -> OrderResult:
