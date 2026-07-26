@@ -29,17 +29,19 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run stock split collector (web scraping)
+        # MONGODB_DATABASE/MONGODB_COLLECTION are intentionally NOT set here: they're
+        # optional with safe defaults in config.py, and referencing an unset GitHub
+        # secret sets the env var to an empty string (not "unset"), which would
+        # silently override the Python default with "". Only add these as secrets +
+        # env vars here if you actually need non-default values.
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          MONGODB_DATABASE: ${{ secrets.MONGODB_DATABASE }}
-          MONGODB_COLLECTION: ${{ secrets.MONGODB_COLLECTION }}
         run: |
           python -m split_strategy.scrapers.runner
-      
+
       - name: Run EDGAR batch processor
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          MONGODB_DATABASE: ${{ secrets.MONGODB_DATABASE }}
           SEC_USER_AGENT: "Split Strategy Analysis contact@splitstrategy.com"
         run: |
           python scripts/nightly_job.py
