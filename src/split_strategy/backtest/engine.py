@@ -143,6 +143,9 @@ def backtest_mega(
     slippage_and_fees: float = 0.015,
     entry_offset: int = 0,
     adjust_for_split: bool = True,
+    slippage_model: str = "flat",
+    max_spread_pct: float = INF,
+    spread_lookback: int = 20,
 ) -> pd.DataFrame:
     """Run the short strategy over `df_events` using the `prices` OHLCV panel.
 
@@ -152,6 +155,14 @@ def backtest_mega(
             DatetimeIndex. `prices[ticker]['Open'/'High'/'Low'/'Close']`.
         entry_offset: 0 = enter at first session on/after t_ann (faithful to notebook);
             1 = enter at the next session (realistic "morning after").
+        slippage_model: "flat" uses `slippage_and_fees` for every trade (the original
+            behavior, preserved so published results stay reproducible).
+            "spread_estimated" replaces it with a per-trade Corwin-Schultz bid-ask
+            spread estimate — far more realistic on sub-$1 names, where a flat 1.5%
+            badly understates the cost of crossing the spread twice.
+        max_spread_pct: skip trades whose estimated spread exceeds this. Mirrors the
+            live spread filter, so the backtest can answer what refusing the
+            worst-priced names does to the edge.
         adjust_for_split: neutralize the mechanical reverse-split price jump (default
             True, and required for correctness). Set False only to reproduce the
             original notebook's buggy behavior for comparison.
@@ -218,6 +229,20 @@ def backtest_mega(
                 if gap_up > max_gap_up:
                     continue
 
+        # --- Execution cost: flat, or estimated from the bid-ask spread ---
+        trade_cost = slippage_and_fees
+        if slippage_model == "spread_estimated" or max_spread_pct < INF:
+            from .slippage import estimate_spread, round_trip_cost
+
+            spread = estimate_spread(ticker_data, entry_date, lookback=spread_lookback)
+            if pd.notna(spread) and spread > max_spread_pct:
+                continue  # too expensive to trade; mirrors the live spread veto
+            if slippage_model == "spread_estimated":
+                # Fall back to the flat assumption when the spread is unknowable
+                # rather than silently pricing the trade as free.
+                trade_cost = round_trip_cost(spread, base_cost=0.0) if pd.notna(spread) \
+                    else slippage_and_fees
+
         # --- Holding window per hold rule ---
         holding_data = _holding_window(future_data, entry_date, row["t_split"], hold_rule)
         if holding_data is None or holding_data.empty:
@@ -249,7 +274,7 @@ def backtest_mega(
                 continue
 
         raw_pct_return = (entry_price - exit_price) / entry_price  # + when price fell (short gain)
-        net_pct_return = raw_pct_return - slippage_and_fees
+        net_pct_return = raw_pct_return - trade_cost
         pnl = current_bet_size * net_pct_return
         portfolio_value += pnl
 
