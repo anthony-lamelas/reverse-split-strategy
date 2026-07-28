@@ -592,7 +592,27 @@ order would face, and logs the intent — without calling Schwab's order endpoin
 **Why this matters:** Schwab's Trader API has **no paper-trading environment** — it only
 connects to live accounts. Dry-run is the substitute.
 
-Going live is `--live`. **There is currently no confirmation prompt** — see §11.
+Going live requires **both** `--live` and `--i-am-sure`, so a stray flag in a scheduled
+task cannot place real orders. Full operational detail is in
+[docs/LIVE_DEPLOYMENT.md](docs/LIVE_DEPLOYMENT.md).
+
+### 8.3a The live path was rebuilt (July 2026)
+
+An audit found the original live path would have been account-ending. The issues and
+their fixes:
+
+| Issue | Fix |
+|---|---|
+| **No exit code existed anywhere.** The only `place_order` call was `equity_sell_short_market`; the ledger deleted positions once their planned exit *date* passed, so the system forgot shorts it still held. | Full round trip: cover orders, a resting GTC take-profit at fill×0.80, and an exit driven by reconciled positions. The take-profit is **cancelled before** the cover — filling both would flip the position long. |
+| **Re-shorted the same ticker daily.** `HOLDING` persisted from entry until the exit date and re-fired every run (~10 stacked shorts over a 10-day window). | Only `ENTER_NOW` opens; one live position per ticker, enforced against the ledger. |
+| **Shortability computed then ignored.** | `schwab_is_shortable=False` and excessive borrow rates are hard vetoes. |
+| **Market orders into penny stocks.** | Every order is a marketable limit; names wider than `MAX_SPREAD_PCT` are skipped. |
+| **`SUBMITTED` treated as filled**; full intended notional booked. | Order status is polled for real fill price/quantity; partial fills resize the position. |
+| **Timeouts recorded as rejections**, creating untracked live shorts. | Distinct `UNCERTAIN` outcome, resolved by reconciliation. |
+| **Hardcoded `ACCOUNT_SIZE`** — sizing never compounded, and effective risk % rose during drawdowns. | Live account equity read from Schwab. |
+| **Stale prices at 5am**; gap-up filter compared the wrong days. | Trading runs ~9:25am ET off live Schwab quotes. |
+| **Weekends-only calendar** could emit signals on market holidays; naive UTC dates shifted "today". | Holiday calendar + ET-aware dates. |
+| No reconciliation, no kill switch. | Halts on any ledger/broker discrepancy; `STOP` file kill switch; append-only audit log. |
 
 ### 8.4 Shortability ground-truth logging
 
@@ -726,33 +746,42 @@ streamlit run streamlit_entry.py
 
 ## 11. Open questions and next steps
 
-**Before considering live capital:**
+**Done since this report was first written (July 2026):**
 
-1. **Add a live-trading confirmation gate.** `--live` currently places orders with no
-   summary/confirmation step. It should print the full intended order set and require
-   explicit confirmation, plus a hard dollar ceiling.
-2. **Reduce default position size.** Validation says 5% is what was tested, but §7.1
-   shows sizing is the *only* effective tail-risk control. 1–2% while establishing live
-   behavior is the conservative read.
-3. **Accumulate shortability ground truth.** Currently 5 data points. Weeks of daily
-   logging would let the proxy be recalibrated against reality — and would directly
-   answer "what fraction of signals can I actually trade?"
-4. **Extended dry-run monitoring.** Compare live-generated signals against backtest
-   expectations for several weeks.
+- ✅ **Live-trading gate** — requires `--live` *and* `--i-am-sure`, plus daily order/
+  notional caps and a `STOP`-file kill switch.
+- ✅ **Position size reduced to 2%** (`TRADE_PCT`), sized off live Schwab equity so it
+  compounds and shrinks with the account.
+- ✅ **Slippage modeled from spreads** — Corwin-Schultz estimator + a spread veto whose
+  5% default was chosen by backtest sweep (`analysis/live_expectations.md`).
+- ✅ **EDGAR pagination fixed** — `filings.files[]` archive pages are now fetched;
+  verified against the live API (`recent` caps at exactly 1,000 filings).
+- ✅ **Test coverage** — 310 tests, offline, running in CI on every push. Engine 91%,
+  scoring 98%, order layer 87%, ledger 98%.
+- ✅ **Exit system built** (see §8.3a) — the largest gap; there was previously no way to
+  close a position.
 
-**Research improvements:**
+**Still open, before considering live capital:**
 
-5. **Address survivorship bias** — wire in Polygon (config hook exists, `POLYGON_API_KEY`
-   unused) or another source with delisted-security coverage.
-6. **Model slippage realistically** — scale with spread and position size vs. average
-   dollar volume rather than a flat 1.5%.
-7. **Point-in-time shortability** — the current classifier uses today's exchange listing
-   data for historical events.
-8. **Re-run the original notebook** (`analysis/strategy.ipynb`) with the split fix so the
-   published numbers are no longer misleading.
-9. **Fix EDGAR pagination** (`processing.py:192` reads only `filings.recent`, silently
-   dropping older filings for high-volume filers — can corrupt `t_ann`).
-10. **Test coverage** — there is essentially none for the backtest math or scoring logic.
+1. **Accumulate shortability ground truth.** Still only a handful of data points. The
+   proxy has already been contradicted on 3 of 5 real checks, so weeks of daily logging
+   would let it be recalibrated — and would answer "what fraction of signals can I
+   actually trade?"
+2. **Extended dry-run monitoring.** Compare live-generated signals against backtest
+   expectations for several weeks before enabling `--live`.
+3. **Watch one full round trip manually** — entry fill, resting take-profit visible in
+   the Schwab UI, clean cover on the exit date.
+
+**Research improvements still outstanding:**
+
+4. **Survivorship bias** — yfinance drops delisted tickers; 16 of 614 had no data at
+   all. Needs a delisted-inclusive source (deferred: no Polygon work this round).
+5. **Point-in-time shortability** — the classifier uses today's exchange listing for
+   historical events. Deferred deliberately: live ground truth supersedes it.
+6. **Re-run the original notebook** (`analysis/strategy.ipynb`) with the split fix so its
+   published numbers stop being misleading.
+7. **Fill realism** — the backtest still assumes limit orders fill. Unfixable without
+   intraday quote data.
 
 ---
 

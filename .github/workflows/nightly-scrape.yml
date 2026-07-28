@@ -55,14 +55,15 @@ jobs:
         run: |
           python scripts/scan_early_edgar.py
 
-      - name: Run daily signal check (dry-run, SMS alert)
-        # Dry-run only - never places real orders. --no-schwab-check because CI has no
-        # cached Schwab token (the OAuth login is an interactive, ~weekly, local step -
-        # see docs/SCHWAB_SETUP.md). This step is stateless: the capital ledger used
-        # locally (DATA/open_positions_*.json) doesn't persist across CI runs, so each
-        # run assumes $0 already committed. That's fine for an informational alert, but
-        # don't treat it as an authoritative "you have capital available" signal if
-        # you're also trading manually or locally.
+      - name: Run daily signal report (SMS alert)
+        # run_signals.py cannot place an order by construction - it has no order code
+        # at all. Trading lives in run_trading.py, which only runs on a machine with a
+        # persistent Schwab token and position ledger (docs/LIVE_DEPLOYMENT.md).
+        #
+        # --no-schwab-check because CI has no cached token; the OAuth login is
+        # interactive and expires every 7 days. This step is also stateless: the
+        # position ledger doesn't persist across CI runs, so committed capital reads as
+        # $0 here. Treat these alerts as "a signal fired", not as portfolio state.
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
