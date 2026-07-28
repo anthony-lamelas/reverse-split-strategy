@@ -191,13 +191,25 @@ def main():
     print(f"\nMode={mode.value} | signals={len(signals)} actionable={len(actionable)} | orders={summ}")
     print(f"Log written: {log_path}")
 
-    # Alert (optional)
+    # Alert (optional). Kept short and plain-ASCII on purpose: this goes out over a
+    # carrier email-to-SMS gateway, which (a) has no multi-part support here (long
+    # messages get silently truncated mid-word) and (b) can mangle characters outside
+    # the basic SMS set (e.g. "~" was turning into "="). Full detail (shortability,
+    # exact prices) is always in the console output and the JSON log - the text is
+    # just the "go check now" nudge.
     enter_now = [s for s in signals if s.status == "ENTER_NOW"]
     if enter_now:
-        body = "Reverse-split short signals (ENTER_NOW):\n" + "\n".join(
-            f"- {s.ticker} short ~{s.shares}sh @ ~${s.current_price} exit {s.effective_date} "
-            f"({'shortable' if s.likely_shortable else 'UNSHORTABLE?'})" for s in enter_now)
-        if _maybe_email(f"[SplitShort] {len(enter_now)} signal(s) {datetime.now():%Y-%m-%d}", body):
+        priced = [s for s in enter_now if s.shares and s.current_price]
+        unpriced = [s for s in enter_now if s not in priced]
+
+        lines = [f"{len(enter_now)} split-short signal(s) today:"]
+        for s in priced:
+            lines.append(f"{s.ticker}: short {s.shares}sh @ ${s.current_price:.2f}, exit {s.effective_date}")
+        if unpriced:
+            lines.append("No price data (check manually): " + ", ".join(s.ticker for s in unpriced))
+        body = "\n".join(lines)
+
+        if _maybe_email("SplitShort Alert", body):
             print("Alert email sent.")
 
 
