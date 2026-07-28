@@ -58,3 +58,9 @@ DATA/events_combined_cache.pkl
 # MongoDB connection strings (should use secrets)
 # Don't commit any files with hardcoded credentials
 
+
+# Test artifacts
+.coverage
+.pytest_cache/
+htmlcov/
+tests/verify.log

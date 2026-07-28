@@ -51,8 +51,13 @@ def parse_ratio(ratio_str) -> float:
     if num <= 0 or den <= 0:
         return float("nan")
     factor = den / num  # "1:25" -> 25 ; "10:1" (forward) -> 0.1
-    if factor < 1:
-        return float("nan")  # forward split, not in scope
+    if factor <= 1:
+        # factor < 1 is a forward split; factor == 1 ("1:1") is a no-op, not a split.
+        # Neither is in scope, and letting 1.0 through would pass the "<10" ratio
+        # bucket as if it were a real event. (Verified absent from current data:
+        # 0 of 1,435 stored ratios parse to exactly 1.0, so this cannot move any
+        # published backtest number.)
+        return float("nan")
     return factor
 
 

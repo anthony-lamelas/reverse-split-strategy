@@ -1,0 +1,33 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # No secrets are provided on purpose: every test must run offline against
+      # synthetic/mocked data. If a test needs MongoDB, the SEC, yfinance or Schwab to
+      # pass, it belongs in tests/manual/ instead - the suite must never fail because an
+      # external service is unreachable.
+      - name: Run tests
+        run: |
+          pytest --cov=split_strategy --cov-report=term-missing

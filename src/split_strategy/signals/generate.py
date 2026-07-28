@@ -193,26 +193,53 @@ def generate_signals(
 
         signals.append(sig)
 
-    # Rank: actionable-now first, then confidence, then soonest execution.
+    rank_signals(signals)
+    allocate_capital(signals, account_size, max_exposure, existing_committed)
+    return signals
+
+
+def rank_signals(signals: list[Signal]) -> list[Signal]:
+    """Sort in place: actionable-now first, then confidence, then soonest execution.
+
+    Ranking determines who gets scarce capital first in `allocate_capital`, so the
+    order is a risk decision, not cosmetics.
+    """
     status_rank = {"ENTER_NOW": 0, "HOLDING": 1, "UPCOMING": 2}
     signals.sort(key=lambda s: (
         status_rank.get(s.status, 3),
         -_CONF_RANK.get((s.confidence or "").lower(), -1),
         s.effective_date or "9999",
     ))
+    return signals
 
-    # Capital allocation: consume the exposure budget in ranked order. A signal that
-    # would push total committed notional over the cap is flagged capital_ok=False
-    # rather than sized anyway - prevents the "unlimited buying power" bug where every
-    # signal gets a fresh 5% of total equity regardless of what's already committed to
-    # other open positions (trades routinely overlap; see docs/VALIDATION_REPORT.md).
+
+def allocate_capital(
+    signals: list[Signal],
+    account_size: float,
+    max_exposure: float,
+    existing_committed: float = 0.0,
+) -> float:
+    """Consume the exposure budget in ranked order, flagging `capital_ok` per signal.
+
+    A signal that would push total committed notional over the cap is marked
+    `capital_ok=False` rather than sized anyway — this is what prevents the
+    "unlimited buying power" bug, where every signal got a fresh slice of total equity
+    regardless of what was already committed to other open positions (trades routinely
+    overlap; see docs/VALIDATION_REPORT.md).
+
+    Signals already excluded by another filter (no shares, gap-up rejected, not yet at
+    entry) must not consume budget — otherwise a trade we were never going to place
+    would crowd out one we would.
+
+    Returns the total committed notional after allocation.
+    """
     exposure_cap = max_exposure * account_size
     committed = existing_committed
     for s in signals:
         if s.status not in ("ENTER_NOW", "HOLDING"):
             continue
         if not s.shares or s.shares <= 0 or s.gap_up_ok is False:
-            continue  # already excluded by other filters; don't consume budget on it
+            continue
         if committed + (s.notional or 0) <= exposure_cap:
             s.capital_ok = True
             committed += (s.notional or 0)
@@ -220,8 +247,7 @@ def generate_signals(
             s.capital_ok = False
             s.notes.append(f"SKIPPED: capital constrained (committed ${committed:,.0f} "
                           f"of ${exposure_cap:,.0f} cap)")
-
-    return signals
+    return committed
 
 
 def enrich_with_schwab_shortability(signals: list[Signal], client) -> list[Signal]:

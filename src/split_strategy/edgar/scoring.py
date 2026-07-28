@@ -39,8 +39,35 @@ def has_rs_keyword(text: str) -> bool:
             return True
     return False
 
-def get_business_days_diff(date1: datetime, date2: datetime) -> int:
-    """Calculate business days difference (excluding weekends)"""
+def _coerce_datetime(value) -> Optional[datetime]:
+    """Accept a datetime or a 'YYYY-MM-DD' string and return a datetime.
+
+    Exists because `parse_date` returns a *string* while callers here build datetimes,
+    and comparing the two raises TypeError. That mismatch previously crashed
+    `score_filing` for any filing that had an effective date alongside a scraped split
+    date, which `nightly_job.py` caught per-split - silently discarding every EDGAR
+    filing for that split.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.strptime(str(value).strip(), "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return None
+
+
+def get_business_days_diff(date1, date2) -> int:
+    """Calculate business days difference (excluding weekends).
+
+    Accepts datetimes or 'YYYY-MM-DD' strings in either position.
+    """
+    date1 = _coerce_datetime(date1)
+    date2 = _coerce_datetime(date2)
+    if date1 is None or date2 is None:
+        raise ValueError("get_business_days_diff requires two parseable dates")
+
     if date1 > date2:
         date1, date2 = date2, date1
     
@@ -151,12 +178,17 @@ def score_filing(filing: Dict, sa_ratio: Optional[Tuple[int, int]], sa_effective
             score += 1
             reasons.append("Ratio matches SA (+1)")
     
-    # Effective date near SA (±5 business days)
+    # Effective date near SA (±5 business days). An unparseable date must only cost
+    # this +1 bonus - never abort scoring, since the caller discards the whole split
+    # on an exception.
     if sa_effective_date and filing.get("effective_date"):
         filing_effective_dt = parse_date(filing.get("effective_date"))
         if filing_effective_dt:
-            bdays_diff = get_business_days_diff(filing_effective_dt, sa_effective_date)
-            if abs(bdays_diff) <= 5:
+            try:
+                bdays_diff = get_business_days_diff(filing_effective_dt, sa_effective_date)
+            except (ValueError, TypeError):
+                bdays_diff = None
+            if bdays_diff is not None and abs(bdays_diff) <= 5:
                 score += 1
                 reasons.append("Effective date near SA (±5 bdays) (+1)")
     

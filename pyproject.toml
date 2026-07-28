@@ -1,0 +1,11 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Makes `import split_strategy...` work without the sys.path.append hack that every
+# script currently repeats. Requires pytest >= 7.
+pythonpath = ["src"]
+# tests/manual/ holds interactive + live-network diagnostics, not real tests.
+norecursedirs = ["tests/manual", "venv", ".git", "DATA", "logs", "analysis"]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: tests that take more than a second (grid search, walk-forward)",
+]

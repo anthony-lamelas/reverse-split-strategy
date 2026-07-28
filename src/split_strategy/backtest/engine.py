@@ -161,6 +161,12 @@ def backtest_mega(
         prices and dates, net return, pnl dollars, the portfolio value after the trade,
         and the exit reason. Empty DataFrame if no trades executed.
     """
+    # An empty event set is a legitimate outcome (e.g. a walk-forward fold or a date
+    # filter that matched nothing). `build_events_*` can return a column-less empty
+    # frame, so bail before touching df_events["t_ann"].
+    if df_events is None or df_events.empty:
+        return pd.DataFrame()
+
     ratio_filter_active = (min_ratio > 0) or (max_ratio < INF)
 
     try:
