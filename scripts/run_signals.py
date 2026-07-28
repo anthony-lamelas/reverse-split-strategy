@@ -191,26 +191,25 @@ def main():
     print(f"\nMode={mode.value} | signals={len(signals)} actionable={len(actionable)} | orders={summ}")
     print(f"Log written: {log_path}")
 
-    # Alert (optional). Kept short and plain-ASCII on purpose: this goes out over a
-    # carrier email-to-SMS gateway, which (a) has no multi-part support here (long
-    # messages get silently truncated mid-word) and (b) can mangle characters outside
-    # the basic SMS set (e.g. "~" was turning into "="). Full detail (shortability,
-    # exact prices) is always in the console output and the JSON log - the text is
-    # just the "go check now" nudge.
+    # Alert (optional). One text per signal, kept short and plain-ASCII on purpose:
+    # this goes out over a carrier email-to-SMS gateway, which (a) has no multi-part
+    # support here (long messages get silently truncated mid-word) and (b) can mangle
+    # characters outside the basic SMS set (e.g. "~" was turning into "="). Sending
+    # one message per signal, instead of bundling them, means a busy day (3+ signals)
+    # can never produce a message long enough to get cut off. Full detail
+    # (shortability, exact prices) is always in the console output and the JSON log -
+    # each text is just the "go check this one now" nudge.
     enter_now = [s for s in signals if s.status == "ENTER_NOW"]
+    sent = 0
+    for s in enter_now:
+        if s.shares and s.current_price:
+            body = f"{s.ticker}: short {s.shares}sh @ ${s.current_price:.2f}, exit {s.effective_date}"
+        else:
+            body = f"{s.ticker}: ENTER_NOW, no price data - check manually. Exit {s.effective_date}"
+        if _maybe_email(f"SplitShort: {s.ticker}", body):
+            sent += 1
     if enter_now:
-        priced = [s for s in enter_now if s.shares and s.current_price]
-        unpriced = [s for s in enter_now if s not in priced]
-
-        lines = [f"{len(enter_now)} split-short signal(s) today:"]
-        for s in priced:
-            lines.append(f"{s.ticker}: short {s.shares}sh @ ${s.current_price:.2f}, exit {s.effective_date}")
-        if unpriced:
-            lines.append("No price data (check manually): " + ", ".join(s.ticker for s in unpriced))
-        body = "\n".join(lines)
-
-        if _maybe_email("SplitShort Alert", body):
-            print("Alert email sent.")
+        print(f"Alert texts sent: {sent}/{len(enter_now)}")
 
 
 if __name__ == "__main__":
