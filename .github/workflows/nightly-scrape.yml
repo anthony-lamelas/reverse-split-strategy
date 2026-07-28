@@ -42,7 +42,9 @@ jobs:
       - name: Run EDGAR batch processor
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          SEC_USER_AGENT: "Split Strategy Analysis contact@splitstrategy.com"
+          # SEC fair-access requires a real contact. Set this repo secret to
+          # "Your Name your.real@email.com" - see docs/VALIDATION_REPORT.md.
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
         run: |
           python scripts/nightly_job.py
       

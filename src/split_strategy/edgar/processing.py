@@ -14,7 +14,7 @@ from ..config import SEC_ARCHIVES_URL, REVERSE_SPLITS_COLLECTION, EDGAR_COLLECTI
 
 # Removed incorrect import from .config
 
-from .client import download_filing_text, get_company_filings
+from .client import download_filing_text, get_all_company_filings, get_company_filings
 from .parsing import (
     check_items, extract_reverse_split_ratio, extract_announcement_date,
     extract_effective_date, check_compliance_flag, check_financing_flag,
@@ -136,10 +136,16 @@ def parse_and_score_filing(cik: str, ticker: str, filing: Dict, split_date: str,
     return result
 
 
-def process_reverse_split_with_edgar(split: Dict, cik_mapping: Dict[str, str], 
-                                     name_mapping: Dict[str, str] = None, 
-                                     skip_existing: bool = True) -> Dict:
-    """Process a single reverse split from reverse_splits collection"""
+def process_reverse_split_with_edgar(split: Dict, cik_mapping: Dict[str, str],
+                                     name_mapping: Dict[str, str] = None,
+                                     skip_existing: bool = True,
+                                     filings_fetcher=get_all_company_filings) -> Dict:
+    """Process a single reverse split from reverse_splits collection.
+
+    `filings_fetcher(cik, start_date, end_date) -> list[dict]` is injectable so the
+    pagination + windowing logic can be tested against canned submissions JSON with no
+    network access.
+    """
     symbol = split.get("Symbol", "")
     split_date = split.get("Date", "")
     split_ratio_str = split.get("Split Ratio", "")
@@ -179,54 +185,47 @@ def process_reverse_split_with_edgar(split: Dict, cik_mapping: Dict[str, str],
     # Get date window
     start_date, end_date = get_date_window(split_date)
     
-    # Fetch company filings
-    filings_data = get_company_filings(cik)
-    if not filings_data:
+    # Fetch company filings, including the paginated archive. Reading only
+    # `filings.recent` (~1000 most recent) silently dropped older filings and could
+    # hide the announcement that defines the trade date - see get_all_company_filings.
+    all_filings = filings_fetcher(cik, start_date, end_date)
+    if not all_filings:
         return {
-            "symbol": symbol, 
-            "status": "no_filings_data", 
+            "symbol": symbol,
+            "status": "no_filings_data",
             "filings_processed": 0
         }
-    
-    # Filter filings by date window and form type
-    filings = filings_data.get("filings", {}).get("recent", {})
-    forms = filings.get("form", [])
-    filing_dates = filings.get("filingDate", [])
-    accessions = filings.get("accessionNumber", [])
-    primary_docs = filings.get("primaryDocument", [])
-    
+
     # Parse date window
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-    
+
     # Collect relevant filings
     relevant_filings = []
-    for i, form in enumerate(forms):
-        if i >= len(filing_dates) or i >= len(accessions):
-            continue
-        
-        filing_date_str = filing_dates[i]
+    for filing in all_filings:
+        filing_date_str = filing.get("filingDate")
         if not filing_date_str:
             continue
-        
+
         try:
             filing_dt = datetime.strptime(filing_date_str, "%Y-%m-%d")
-        except:
+        except (ValueError, TypeError):
             continue
-        
+
         # Check date window
         if filing_dt < start_dt or filing_dt > end_dt:
             continue
-        
+
         # Check form type
+        form = filing.get("form")
         if form in TARGET_FORMS or form in CONTEXT_FORMS:
             relevant_filings.append({
                 "form": form,
                 "filingDate": filing_date_str,
-                "accessionNumber": accessions[i] if i < len(accessions) else None,
-                "primaryDocument": primary_docs[i] if i < len(primary_docs) else None
+                "accessionNumber": filing.get("accessionNumber"),
+                "primaryDocument": filing.get("primaryDocument"),
             })
-    
+
     if not relevant_filings:
         return {
             "symbol": symbol,

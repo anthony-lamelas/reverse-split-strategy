@@ -27,7 +27,22 @@ EDGAR_COLLECTION = "reverse_splits_edgar"
 EARLY_WARNINGS_COLLECTION = "early_edgar_splits"
 
 # EDGAR Configuration
-SEC_USER_AGENT = os.environ.get("SEC_USER_AGENT", "Split Strategy Analysis contact@splitstrategy.com")
+# SEC fair-access policy requires a real, reachable contact in the User-Agent. Shipping
+# a fake one risks an IP ban for the whole pipeline. We warn rather than hard-fail so an
+# unset value can't take down a nightly run mid-flight - but the placeholder below is
+# NOT compliant and must be overridden via the SEC_USER_AGENT env var.
+_SEC_UA_PLACEHOLDER = "Split Strategy Analysis contact@splitstrategy.com"
+SEC_USER_AGENT = os.environ.get("SEC_USER_AGENT") or _SEC_UA_PLACEHOLDER
+if SEC_USER_AGENT == _SEC_UA_PLACEHOLDER:
+    import warnings
+
+    warnings.warn(
+        "SEC_USER_AGENT is unset and is falling back to a placeholder contact address. "
+        "SEC fair-access policy requires a real name + email; set SEC_USER_AGENT in .env "
+        "(and as a GitHub Actions secret) to avoid risking an IP ban.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
 SEC_BASE_URL = "https://data.sec.gov"
 SEC_ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data"
 REQUEST_DELAY = 0.2

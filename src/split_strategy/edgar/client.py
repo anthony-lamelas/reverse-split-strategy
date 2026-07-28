@@ -3,10 +3,11 @@ EDGAR Client for SEC API interaction.
 """
 import os
 import json
+import threading
 from pathlib import Path
 import requests
 import time
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
 from ..config import SEC_BASE_URL, SEC_ARCHIVES_URL, REQUEST_DELAY, SEC_USER_AGENT
 from .utils import normalize_cik
@@ -15,6 +16,35 @@ HEADERS = {
     "User-Agent": SEC_USER_AGENT,
     "Accept": "application/json"
 }
+
+# SEC fair-access guidance is ~10 requests/second. The per-call `time.sleep` pacing
+# elsewhere in this module is per-thread, and scan_early_edgar.py fans out across a
+# ThreadPoolExecutor, so it provides no global guarantee. Pagination multiplies the
+# request count further. This limiter is process-wide and thread-safe.
+SEC_MAX_REQUESTS_PER_SEC = 8.0
+
+
+class _RateLimiter:
+    """Process-wide token bucket, safe to share across threads."""
+
+    def __init__(self, rate_per_sec: float):
+        self._min_interval = 1.0 / rate_per_sec
+        self._lock = threading.Lock()
+        self._next_allowed = 0.0
+
+    def acquire(self) -> None:
+        # Reserve a slot under the lock, then sleep outside it so waiting threads
+        # queue up rather than serializing on the sleep itself.
+        with self._lock:
+            now = time.monotonic()
+            start = max(now, self._next_allowed)
+            self._next_allowed = start + self._min_interval
+        delay = start - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
+
+
+_SEC_LIMITER = _RateLimiter(SEC_MAX_REQUESTS_PER_SEC)
 
 COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 
@@ -212,8 +242,135 @@ def get_company_filings(cik: str) -> Optional[Dict]:
                 print(f"  Error fetching filings for CIK {cik_normalized} after {max_retries} attempts: {e}")
             else:
                 time.sleep(base_delay * (attempt + 1))
-                
+
     return None
+
+
+def get_submissions_page(name: str) -> Optional[Dict]:
+    """Fetch one paginated submissions page, e.g. 'CIK0000320193-submissions-001.json'.
+
+    Unlike the root submissions document, these pages are a *bare* parallel-array dict
+    - they are not wrapped in a "filings"/"recent" envelope.
+    """
+    url = f"{SEC_BASE_URL}/submissions/{name}"
+    max_retries = 4
+    base_delay = 1.5
+
+    for attempt in range(max_retries):
+        try:
+            _SEC_LIMITER.acquire()
+            response = requests.get(url, headers=HEADERS)
+
+            if response.status_code == 429:
+                delay = base_delay * (2 ** attempt)
+                print(f"  [HTTP 429] SEC rate limit on submissions page {name}. Backing off {delay:.1f}s...")
+                time.sleep(delay)
+                continue
+            if response.status_code >= 500:
+                time.sleep(base_delay * (attempt + 1))
+                continue
+            if response.status_code == 404:
+                return None
+
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            if attempt == max_retries - 1:
+                print(f"  Error fetching submissions page {name}: {e}")
+            else:
+                time.sleep(base_delay * (attempt + 1))
+
+    return None
+
+
+def normalize_filing_arrays(block: Optional[Dict]) -> List[Dict]:
+    """Convert SEC's parallel-array filing block into a list of per-filing dicts.
+
+    The API stores filings column-wise (`form: [...]`, `filingDate: [...]`, ...). Index
+    misalignment between those arrays is a real hazard - the previous index-parallel
+    loop guarded some arrays but not `primaryDocument`. Building dicts once removes
+    that whole class of bug.
+    """
+    if not block:
+        return []
+
+    forms = block.get("form") or []
+    dates = block.get("filingDate") or []
+    accessions = block.get("accessionNumber") or []
+    docs = block.get("primaryDocument") or []
+
+    n = min(len(forms), len(dates), len(accessions), len(docs))
+    return [
+        {
+            "form": forms[i],
+            "filingDate": dates[i],
+            "accessionNumber": accessions[i],
+            "primaryDocument": docs[i],
+        }
+        for i in range(n)
+    ]
+
+
+def _page_intersects_window(page: Dict, start_date: Optional[str], end_date: Optional[str]) -> bool:
+    """Skip archive pages that cannot contain filings in [start_date, end_date].
+
+    Dates are ISO 'YYYY-MM-DD', which compare correctly as plain strings.
+    """
+    if not start_date and not end_date:
+        return True
+    page_from = page.get("filingFrom") or ""
+    page_to = page.get("filingTo") or ""
+    if end_date and page_from and page_from > end_date:
+        return False
+    if start_date and page_to and page_to < start_date:
+        return False
+    return True
+
+
+def get_all_company_filings(
+    cik: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> List[Dict]:
+    """All filings for a CIK, including the paginated archive.
+
+    WHY THIS EXISTS: `filings.recent` in the submissions API caps at roughly the last
+    1,000 filings; everything older is paginated into `filings.files[]`. Reading only
+    `recent` silently dropped older filings - and for the frequent-filer micro-caps
+    this project tracks, 1,000 filings can span well under a year. That could hide the
+    very 8-K that establishes a split's announcement date, which the entire strategy
+    keys on.
+
+    Passing the date window lets us skip archive pages whose own filingFrom/filingTo
+    range can't intersect it, so a typical lookup still costs one request.
+    """
+    root = get_company_filings(cik)
+    if not root:
+        return []
+
+    filings = root.get("filings", {}) or {}
+    merged = normalize_filing_arrays(filings.get("recent"))
+
+    for page in (filings.get("files") or []):
+        name = page.get("name")
+        if not name or not _page_intersects_window(page, start_date, end_date):
+            continue
+        page_data = get_submissions_page(name)
+        if page_data:
+            merged.extend(normalize_filing_arrays(page_data))
+
+    # The archive and `recent` can overlap at the boundary.
+    seen = set()
+    deduped = []
+    for filing in merged:
+        accession = filing.get("accessionNumber")
+        if accession and accession in seen:
+            continue
+        if accession:
+            seen.add(accession)
+        deduped.append(filing)
+    return deduped
+
 
 def download_filing_text(cik: str, accession: str, primary_doc: str) -> Optional[str]:
     """Download and return filing text with robust retry and backoff logic"""
