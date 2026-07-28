@@ -91,6 +91,19 @@ MAX_GAP_UP_PCT = 0.30     # skip entry if it gaps up >30% vs prior close
 # non-marginable short sales (most of these microcaps). See docs/VALIDATION_REPORT.md.
 MAX_EXPOSURE = float(os.environ.get("MAX_EXPOSURE", "1.0"))
 
+# --- Live-trading circuit breakers (see docs/LIVE_DEPLOYMENT.md) ---
+# Deliberately NO concurrent-position cap: the 100% exposure ceiling above governs how
+# many positions can be open. These limit the *rate* of new risk and the quality of
+# fills, guarding against a runaway loop or a bad data day.
+MAX_NEW_SHORTS_PER_DAY = int(os.environ.get("MAX_NEW_SHORTS_PER_DAY", "5"))
+MAX_DAILY_NOTIONAL = float(os.environ.get("MAX_DAILY_NOTIONAL", "5000"))
+# Annualized hard-to-borrow ceiling, in percent. Backtesting showed Strategy B still
+# profitable at 200%/yr borrow, but a name that expensive is a warning sign.
+MAX_HTB_RATE = float(os.environ.get("MAX_HTB_RATE", "100"))
+# Skip names whose bid-ask spread exceeds this fraction of the mid. On a $0.09 stock a
+# one-cent spread is ~11% - crossing it twice costs far more than the strategy's edge.
+MAX_SPREAD_PCT = float(os.environ.get("MAX_SPREAD_PCT", "0.05"))
+
 # Optional SMTP alerting for the daily signal run (all optional; no-op if unset).
 SMTP_HOST = os.environ.get("SMTP_HOST")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))

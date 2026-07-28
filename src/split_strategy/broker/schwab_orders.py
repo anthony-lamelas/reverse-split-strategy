@@ -1,24 +1,39 @@
-"""Construct and (optionally) place SELL_SHORT orders from signals.
+"""Order construction and submission for the reverse-split short strategy.
 
-Default mode is DRY_RUN: orders are fully constructed and logged as "would place …"
-but never sent. LIVE mode submits via schwab-py and records fill-vs-reject outcomes —
-many micro-caps reject for no-borrow / non-marginable, which is expected and logged,
-not treated as an error.
+Covers the full round trip, which the previous version did not: this module can open a
+short, attach a resting take-profit, cancel it, and cover. Previously the only
+`place_order` call in the repo was `equity_sell_short_market` — the system opened
+positions and had no way to close them.
 
-This milestone ships DRY_RUN only; LIVE is wired but gated behind an explicit flag.
+Design rules enforced here:
+- Every order is a **marketable limit**, never a market order (see broker/quotes.py).
+- Only `ENTER_NOW` opens a position; acting on a still-actionable `HOLDING` signal is
+  how the previous version stacked a fresh short on the same ticker every day.
+- Shortability and borrow cost are *vetoes*, not annotations.
+- DRY_RUN builds the real order payload and never calls `place_order`.
+- A submit that raises is reported as UNCERTAIN, not REJECTED: the order may have
+  reached Schwab, so it must be reconciled rather than assumed dead.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Optional
 
-from ..signals.generate import Signal
+from .quotes import Quote, marketable_limit_price, spread_too_wide
 
 
 class OrderMode(str, Enum):
     DRY_RUN = "DRY_RUN"
     LIVE = "LIVE"
+
+
+class Outcome(str, Enum):
+    WOULD_PLACE = "WOULD_PLACE"     # dry-run only
+    SUBMITTED = "SUBMITTED"
+    REJECTED = "REJECTED"           # broker said no
+    SKIPPED = "SKIPPED"             # we chose not to send it
+    UNCERTAIN = "UNCERTAIN"         # may or may not have reached the broker
 
 
 @dataclass
@@ -28,107 +43,254 @@ class OrderResult:
     quantity: int
     order_type: str
     mode: str
-    outcome: str            # WOULD_PLACE | SUBMITTED | REJECTED | SKIPPED
+    outcome: str
     detail: str = ""
     order_id: Optional[str] = None
+    limit_price: Optional[float] = None
+    client_order_id: Optional[str] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
-def build_order_spec(signal: Signal, order_type: str = "MARKET") -> dict:
-    """A broker-agnostic dict describing the intended short order."""
-    return {
-        "symbol": signal.ticker,
-        "instruction": "SELL_SHORT",
-        "quantity": int(signal.shares or 0),
-        "order_type": order_type,
-        "planned_stop_price": signal.stop_price,
-        "planned_exit_date": signal.effective_date,
-    }
+@dataclass
+class RiskLimits:
+    """Circuit breakers. Exceeding one stops the order, it does not shrink it."""
+    max_new_shorts_per_day: int = 5
+    max_daily_notional: float = 5_000.0
+    max_htb_rate: float = 100.0        # annualized borrow % ceiling
+    max_spread_pct: float = 0.05
+    limit_buffer_pct: float = 0.02
+
+
+def build_entry_order(ticker: str, shares: int, limit_price: float):
+    """A marketable-limit SELL_SHORT."""
+    from schwab.orders.equities import equity_sell_short_limit
+
+    return equity_sell_short_limit(ticker, int(shares), _fmt(limit_price))
+
+
+def build_cover_order(ticker: str, shares: int, limit_price: float):
+    """A marketable-limit BUY_TO_COVER used for the time-based exit."""
+    from schwab.orders.equities import equity_buy_to_cover_limit
+
+    return equity_buy_to_cover_limit(ticker, int(shares), _fmt(limit_price))
+
+
+def build_take_profit_order(ticker: str, shares: int, limit_price: float):
+    """A resting GTC BUY_TO_COVER limit implementing Strategy B's 20% take-profit.
+
+    Placing this right after the entry fills means the broker enforces the profit
+    target — the bot can be offline and it still works, with no intraday polling.
+    """
+    from schwab.orders.common import Duration, Session
+    from schwab.orders.equities import equity_buy_to_cover_limit
+
+    order = equity_buy_to_cover_limit(ticker, int(shares), _fmt(limit_price))
+    order.set_duration(Duration.GOOD_TILL_CANCEL)
+    order.set_session(Session.NORMAL)
+    return order
+
+
+def _fmt(price: float) -> str:
+    """Schwab wants limit prices as strings; sub-dollar names need 4dp."""
+    price = float(price)
+    return f"{price:.4f}" if price < 1 else f"{price:.2f}"
+
+
+def extract_order_id(response) -> Optional[str]:
+    """Schwab returns the new order id in the Location header, not the body."""
+    try:
+        location = response.headers.get("Location", "") or ""
+        return location.rsplit("/", 1)[-1] or None
+    except Exception:
+        return None
 
 
 class OrderManager:
-    def __init__(self, mode: OrderMode = OrderMode.DRY_RUN, client=None, account_hash: Optional[str] = None):
+    """Submits orders, or in DRY_RUN logs exactly what it would have submitted."""
+
+    def __init__(
+        self,
+        mode: OrderMode = OrderMode.DRY_RUN,
+        client=None,
+        account_hash: Optional[str] = None,
+        limits: Optional[RiskLimits] = None,
+    ):
         self.mode = OrderMode(mode)
         self.client = client
         self.account_hash = account_hash
+        self.limits = limits or RiskLimits()
         self.results: list[OrderResult] = []
+        self.new_shorts_today = 0
+        self.notional_today = 0.0
 
-    # --- validation shared by both modes ---
-    def _presubmit_reasons_to_skip(self, signal: Signal) -> Optional[str]:
+    # -- gating ---------------------------------------------------------------
+
+    def entry_block_reason(self, signal, quote: Optional[Quote]) -> Optional[str]:
+        """Why this entry must NOT be sent, or None if it may proceed.
+
+        Every check here was either absent or computed-then-ignored previously.
+        """
+        if signal.status != "ENTER_NOW":
+            return f"status is {signal.status}; only ENTER_NOW opens a position"
         if not signal.shares or signal.shares <= 0:
-            return "no share quantity (missing/invalid price)"
+            return "no share quantity (missing or invalid price)"
         if signal.gap_up_ok is False:
             return f"gap-up filter ({signal.gap_up_pct:.1f}%)"
-        if signal.status == "UPCOMING":
-            return "not yet at entry date"
         if signal.capital_ok is False:
             return "capital constrained (exposure cap reached by higher-ranked signals)"
+        if signal.schwab_is_shortable is False:
+            return "Schwab reports the symbol is not shortable"
+        if signal.schwab_is_shortable is None and not signal.likely_shortable:
+            return "no Schwab confirmation and proxy says unshortable"
+        htb = signal.schwab_htb_rate
+        if htb is not None and abs(float(htb)) > self.limits.max_htb_rate:
+            return (f"borrow cost {abs(float(htb)):.0f}% exceeds "
+                    f"{self.limits.max_htb_rate:.0f}% ceiling")
+        if quote is None:
+            return "no live quote available"
+        if spread_too_wide(quote, self.limits.max_spread_pct):
+            spread = quote.spread_pct
+            shown = "unquotable" if spread is None else f"{spread * 100:.1f}%"
+            return f"spread {shown} exceeds {self.limits.max_spread_pct * 100:.0f}% limit"
+        if self.new_shorts_today >= self.limits.max_new_shorts_per_day:
+            return f"daily new-short limit reached ({self.limits.max_new_shorts_per_day})"
+        projected = self.notional_today + (signal.notional or 0.0)
+        if projected > self.limits.max_daily_notional:
+            return (f"daily notional cap: ${projected:,.0f} would exceed "
+                    f"${self.limits.max_daily_notional:,.0f}")
         return None
 
-    def process(self, signal: Signal, order_type: str = "MARKET") -> OrderResult:
-        spec = build_order_spec(signal, order_type)
-        skip = self._presubmit_reasons_to_skip(signal)
-        if skip:
-            res = OrderResult(signal.ticker, "SELL_SHORT", spec["quantity"], order_type,
-                              self.mode.value, "SKIPPED", detail=skip)
-            self.results.append(res)
-            return res
+    # -- entries --------------------------------------------------------------
 
-        if self.mode == OrderMode.DRY_RUN:
-            detail = (f"would SELL_SHORT {spec['quantity']} {signal.ticker} @ market "
-                      f"(notional ~${signal.notional:,.0f}, stop ${signal.stop_price}); "
-                      f"{'shortable' if signal.likely_shortable else 'LIKELY UNSHORTABLE'}")
-            res = OrderResult(signal.ticker, "SELL_SHORT", spec["quantity"], order_type,
-                              self.mode.value, "WOULD_PLACE", detail=detail)
-            self.results.append(res)
-            return res
+    def submit_entry(self, signal, quote: Optional[Quote],
+                     client_order_id: Optional[str] = None) -> OrderResult:
+        block = self.entry_block_reason(signal, quote)
+        if block:
+            return self._record(signal.ticker, "SELL_SHORT", int(signal.shares or 0),
+                                Outcome.SKIPPED, block, client_order_id=client_order_id)
 
-        # --- LIVE ---
-        return self._submit_live(signal, spec, order_type)
+        limit = marketable_limit_price(quote, "SELL_SHORT", self.limits.limit_buffer_pct)
+        if not limit or limit <= 0:
+            return self._record(signal.ticker, "SELL_SHORT", int(signal.shares or 0),
+                                Outcome.SKIPPED, "could not derive a limit price",
+                                client_order_id=client_order_id)
 
-    def _submit_live(self, signal: Signal, spec: dict, order_type: str) -> OrderResult:
+        shares = int(signal.shares)
+        if self.mode is OrderMode.DRY_RUN:
+            detail = (f"would SELL_SHORT {shares} {signal.ticker} @ limit {limit} "
+                      f"(bid {quote.bid}, spread {quote.spread_pct * 100:.1f}%)")
+            self.new_shorts_today += 1
+            self.notional_today += signal.notional or 0.0
+            return self._record(signal.ticker, "SELL_SHORT", shares, Outcome.WOULD_PLACE,
+                                detail, limit_price=limit, client_order_id=client_order_id)
+
+        result = self._place(build_entry_order(signal.ticker, shares, limit),
+                             signal.ticker, "SELL_SHORT", shares, limit, client_order_id)
+        if result.outcome in (Outcome.SUBMITTED.value, Outcome.UNCERTAIN.value):
+            self.new_shorts_today += 1
+            self.notional_today += signal.notional or 0.0
+        return result
+
+    # -- exits ----------------------------------------------------------------
+
+    def submit_take_profit(self, ticker: str, shares: int, entry_fill: float,
+                           take_profit_pct: float) -> OrderResult:
+        """Rest a GTC cover limit at entry_fill * (1 - take_profit_pct)."""
+        limit = round(float(entry_fill) * (1.0 - take_profit_pct), 4)
+        if limit <= 0:
+            return self._record(ticker, "BUY_TO_COVER", shares, Outcome.SKIPPED,
+                                "take-profit price computed <= 0")
+        if self.mode is OrderMode.DRY_RUN:
+            return self._record(ticker, "BUY_TO_COVER", shares, Outcome.WOULD_PLACE,
+                                f"would rest GTC take-profit @ {limit}", limit_price=limit)
+        return self._place(build_take_profit_order(ticker, shares, limit),
+                           ticker, "BUY_TO_COVER", shares, limit)
+
+    def submit_cover(self, ticker: str, shares: int, quote: Optional[Quote]) -> OrderResult:
+        """Marketable-limit cover for the time-based exit."""
+        if quote is None:
+            return self._record(ticker, "BUY_TO_COVER", shares, Outcome.SKIPPED,
+                                "no live quote; cannot price a cover safely")
+        limit = marketable_limit_price(quote, "BUY_TO_COVER", self.limits.limit_buffer_pct)
+        if not limit or limit <= 0:
+            return self._record(ticker, "BUY_TO_COVER", shares, Outcome.SKIPPED,
+                                "could not derive a cover limit price")
+        if self.mode is OrderMode.DRY_RUN:
+            return self._record(ticker, "BUY_TO_COVER", shares, Outcome.WOULD_PLACE,
+                                f"would COVER {shares} {ticker} @ limit {limit}",
+                                limit_price=limit)
+        return self._place(build_cover_order(ticker, shares, limit),
+                           ticker, "BUY_TO_COVER", shares, limit)
+
+    def cancel(self, order_id: str, ticker: str = "") -> OrderResult:
+        """Cancel a resting order — used to pull the take-profit before a time exit.
+
+        Covering without cancelling first can fill BOTH orders and flip the position
+        long, so callers must treat a failed cancel as fatal for that position.
+        """
+        if self.mode is OrderMode.DRY_RUN:
+            return self._record(ticker, "CANCEL", 0, Outcome.WOULD_PLACE,
+                                f"would cancel order {order_id}", order_id=order_id)
         try:
-            from schwab.orders.equities import (
-                equity_sell_short_market,
-                equity_sell_short_limit,
-            )
-        except ImportError as e:
-            res = OrderResult(signal.ticker, "SELL_SHORT", spec["quantity"], order_type,
-                              self.mode.value, "REJECTED", detail=f"schwab-py not installed: {e}")
-            self.results.append(res)
-            return res
+            resp = self.client.cancel_order(order_id, self.account_hash)
+        except Exception as e:
+            return self._record(ticker, "CANCEL", 0, Outcome.UNCERTAIN,
+                                f"cancel raised: {e}", order_id=order_id)
 
+        if resp.status_code >= 400:
+            # An order that is already filled or gone cannot be cancelled; that is a
+            # normal outcome here, not a failure.
+            if resp.status_code in (400, 404):
+                return self._record(ticker, "CANCEL", 0, Outcome.SUBMITTED,
+                                    f"order {order_id} not cancellable "
+                                    f"(HTTP {resp.status_code}) - treating as already gone",
+                                    order_id=order_id)
+            return self._record(ticker, "CANCEL", 0, Outcome.REJECTED,
+                                f"cancel failed: HTTP {resp.status_code} {resp.text[:120]}",
+                                order_id=order_id)
+        return self._record(ticker, "CANCEL", 0, Outcome.SUBMITTED,
+                            f"cancelled {order_id}", order_id=order_id)
+
+    # -- plumbing -------------------------------------------------------------
+
+    def _place(self, order, ticker, side, shares, limit, client_order_id=None) -> OrderResult:
         if self.client is None or self.account_hash is None:
-            res = OrderResult(signal.ticker, "SELL_SHORT", spec["quantity"], order_type,
-                              self.mode.value, "REJECTED", detail="no authenticated client/account")
-            self.results.append(res)
-            return res
-
+            return self._record(ticker, side, shares, Outcome.REJECTED,
+                                "no authenticated client/account", limit_price=limit,
+                                client_order_id=client_order_id)
         try:
-            order = equity_sell_short_market(signal.ticker, spec["quantity"])
             resp = self.client.place_order(self.account_hash, order)
-            # schwab-py returns an httpx.Response; 201 = created.
-            if resp.status_code >= 400:
-                detail = f"broker rejected ({resp.status_code}): {resp.text[:200]}"
-                outcome = "REJECTED"
-                order_id = None
-            else:
-                order_id = resp.headers.get("Location", "").rsplit("/", 1)[-1] or None
-                detail = f"submitted (HTTP {resp.status_code})"
-                outcome = "SUBMITTED"
-        except Exception as e:  # includes no-borrow / not-shortable rejections
-            detail = f"exception on submit: {e}"
-            outcome = "REJECTED"
-            order_id = None
+        except Exception as e:
+            # The request may have reached Schwab before the failure. Calling this
+            # REJECTED (the old behavior) could leave a real, untracked short open.
+            return self._record(ticker, side, shares, Outcome.UNCERTAIN,
+                                f"submit raised ({e}) - reconcile before retrying",
+                                limit_price=limit, client_order_id=client_order_id)
 
-        res = OrderResult(signal.ticker, "SELL_SHORT", spec["quantity"], order_type,
-                          self.mode.value, outcome, detail=detail, order_id=order_id)
-        self.results.append(res)
-        return res
+        if resp.status_code >= 400:
+            return self._record(ticker, side, shares, Outcome.REJECTED,
+                                f"broker rejected (HTTP {resp.status_code}): {resp.text[:200]}",
+                                limit_price=limit, client_order_id=client_order_id)
+        return self._record(ticker, side, shares, Outcome.SUBMITTED,
+                            f"submitted @ limit {limit} (HTTP {resp.status_code})",
+                            order_id=extract_order_id(resp), limit_price=limit,
+                            client_order_id=client_order_id)
+
+    def _record(self, ticker, side, quantity, outcome: Outcome, detail,
+                order_id=None, limit_price=None, client_order_id=None) -> OrderResult:
+        result = OrderResult(
+            ticker=ticker, side=side, quantity=int(quantity or 0),
+            order_type="CANCEL" if side == "CANCEL" else "LIMIT",
+            mode=self.mode.value, outcome=outcome.value, detail=detail,
+            order_id=order_id, limit_price=limit_price, client_order_id=client_order_id,
+        )
+        self.results.append(result)
+        return result
 
     def summary(self) -> dict:
         from collections import Counter
-        c = Counter(r.outcome for r in self.results)
-        return dict(total=len(self.results), **c)
+
+        counts = Counter(r.outcome for r in self.results)
+        return dict(total=len(self.results), **counts)

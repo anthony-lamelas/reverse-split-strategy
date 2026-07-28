@@ -1,0 +1,91 @@
+"""US market calendar and Eastern-time helpers.
+
+Two bugs this addresses:
+
+1. `_next_business_day` skipped weekends only, so an entry landing on Thanksgiving or
+   July 4th produced an ENTER_NOW signal for a closed market.
+2. All date logic used naive `pd.Timestamp.now()`. On a UTC machine (a CI runner, or a
+   scheduled task run before 5am ET) "today" resolves to tomorrow's date in ET terms,
+   silently shifting ENTER_NOW to the wrong day.
+"""
+from __future__ import annotations
+
+from datetime import date
+from typing import Iterable, Optional
+
+import pandas as pd
+
+ET = "America/New_York"
+
+# NYSE/Nasdaq full-day closures. Extend annually; a missing future year degrades to
+# "weekday = open", which is the same behavior as before, not worse.
+MARKET_HOLIDAYS: set[date] = {
+    # 2025
+    date(2025, 1, 1), date(2025, 1, 9), date(2025, 1, 20), date(2025, 2, 17),
+    date(2025, 4, 18), date(2025, 5, 26), date(2025, 6, 19), date(2025, 7, 4),
+    date(2025, 9, 1), date(2025, 11, 27), date(2025, 12, 25),
+    # 2026
+    date(2026, 1, 1), date(2026, 1, 19), date(2026, 2, 16), date(2026, 4, 3),
+    date(2026, 5, 25), date(2026, 6, 19), date(2026, 7, 3), date(2026, 9, 7),
+    date(2026, 11, 26), date(2026, 12, 25),
+    # 2027
+    date(2027, 1, 1), date(2027, 1, 18), date(2027, 2, 15), date(2027, 3, 26),
+    date(2027, 5, 31), date(2027, 6, 18), date(2027, 7, 5), date(2027, 9, 6),
+    date(2027, 11, 25), date(2027, 12, 24),
+}
+
+
+def now_et() -> pd.Timestamp:
+    """Current time in Eastern, tz-aware. All trading decisions key off this."""
+    return pd.Timestamp.now(tz=ET)
+
+
+def today_et() -> pd.Timestamp:
+    """Today's ET calendar date as a tz-naive midnight timestamp.
+
+    tz-naive on purpose: it is compared against tz-naive dates parsed from Mongo and
+    the ledger, and mixing the two raises.
+    """
+    return pd.Timestamp(now_et().date())
+
+
+def is_trading_day(ts) -> bool:
+    ts = pd.Timestamp(ts)
+    if ts.weekday() >= 5:
+        return False
+    return ts.date() not in MARKET_HOLIDAYS
+
+
+def next_trading_day(ts) -> pd.Timestamp:
+    """The next session strictly after `ts`, skipping weekends and holidays."""
+    nxt = pd.Timestamp(ts).normalize() + pd.Timedelta(days=1)
+    # Bounded so an unexpected holiday run can't spin forever.
+    for _ in range(15):
+        if is_trading_day(nxt):
+            return nxt
+        nxt += pd.Timedelta(days=1)
+    return nxt
+
+
+def market_open_et(ts=None) -> pd.Timestamp:
+    ts = now_et() if ts is None else pd.Timestamp(ts)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize(ET)
+    return ts.normalize() + pd.Timedelta(hours=9, minutes=30)
+
+
+def minutes_until_open(ts=None) -> float:
+    ts = now_et() if ts is None else pd.Timestamp(ts)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize(ET)
+    return (market_open_et(ts) - ts).total_seconds() / 60.0
+
+
+def is_market_hours(ts=None) -> bool:
+    ts = now_et() if ts is None else pd.Timestamp(ts)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize(ET)
+    if not is_trading_day(ts):
+        return False
+    minutes = ts.hour * 60 + ts.minute
+    return 9 * 60 + 30 <= minutes < 16 * 60
