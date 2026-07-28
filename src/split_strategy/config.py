@@ -62,8 +62,12 @@ SCHWAB_ACCOUNT_HASH = os.environ.get("SCHWAB_ACCOUNT_HASH")
 
 # --- Trading / sizing defaults (mirror analysis/strategy.md + ui/dashboard.py) ---
 DEFAULT_ACCOUNT_SIZE = float(os.environ.get("ACCOUNT_SIZE", "10000"))
-TRADE_PCT = 0.05          # 5% of equity notional per trade
-STOP_LOSS_PCT = 0.40      # 40% hard stop (short: stop is above entry)
+# 2% of equity notional per trade (deliberately below the 5% used in backtesting -
+# stops don't help this strategy (tail_risk_test.py: every stop level tested reduced
+# returns without reliably reducing drawdown), so position size is the only real
+# tail-risk lever until live behavior is confirmed against the backtest).
+TRADE_PCT = float(os.environ.get("TRADE_PCT", "0.02"))
+STOP_LOSS_PCT = 0.40      # legacy reference only - validated strategy uses NO stop
 MAX_GAP_UP_PCT = 0.30     # skip entry if it gaps up >30% vs prior close
 # Max total notional committed across ALL concurrently open positions, as a fraction
 # of account equity. Trades routinely overlap (backtest found a median of 13-55
