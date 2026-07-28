@@ -7,3 +7,6 @@ logged_at,ticker,confidence,entry_price,exchange,proxy_likely_shortable,schwab_i
 2026-07-27T21:21:38.568140,NEXRW,High,,Nasdaq,True,True,True,-10.0
 2026-07-27T21:21:38.568140,PMI,High,0.08799999952316284,NYSE,False,True,True,-13.75
 2026-07-27T21:21:38.568140,MVIS,High,0.25,Nasdaq,False,True,True,-7.25
+2026-07-27T21:31:07.311427,NEXRW,High,,Nasdaq,True,True,True,-10.0
+2026-07-27T21:31:07.311427,PMI,High,0.08799999952316284,NYSE,False,True,True,-13.75
+2026-07-27T21:31:07.311427,MVIS,High,0.25,Nasdaq,False,True,True,-7.25

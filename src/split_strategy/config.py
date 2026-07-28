@@ -95,7 +95,7 @@ MAX_EXPOSURE = float(os.environ.get("MAX_EXPOSURE", "1.0"))
 # Deliberately NO concurrent-position cap: the 100% exposure ceiling above governs how
 # many positions can be open. These limit the *rate* of new risk and the quality of
 # fills, guarding against a runaway loop or a bad data day.
-MAX_NEW_SHORTS_PER_DAY = int(os.environ.get("MAX_NEW_SHORTS_PER_DAY", "5"))
+MAX_NEW_SHORTS_PER_DAY = int(os.environ.get("MAX_NEW_SHORTS_PER_DAY", "8"))
 MAX_DAILY_NOTIONAL = float(os.environ.get("MAX_DAILY_NOTIONAL", "5000"))
 # Annualized hard-to-borrow ceiling, in percent. Backtesting showed Strategy B still
 # profitable at 200%/yr borrow, but a name that expensive is a warning sign.

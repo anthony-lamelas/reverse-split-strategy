@@ -80,7 +80,7 @@ position sizes were computed from a >24h-stale price.
 | **Spread veto** | Skips names wider than `MAX_SPREAD_PCT` (default 5%, validated by backtest sweep). |
 | **Marketable limits** | Never a market order. Caps how bad any fill can be. |
 | **Exposure ceiling** | Total committed notional ≤ `MAX_EXPOSURE` × equity (default 100%). No position-count cap by design. |
-| **Rate limits** | `MAX_NEW_SHORTS_PER_DAY` (5) and `MAX_DAILY_NOTIONAL` ($5,000). |
+| **Rate limits** | `MAX_NEW_SHORTS_PER_DAY` (8) and `MAX_DAILY_NOTIONAL` ($5,000). |
 | **Cancel-before-cover** | On the exit date the resting take-profit is cancelled *first*. If the cancel fails, **no cover is sent** — filling both would flip you long. |
 | **Kill switch** | A file named `STOP` in the repo root halts everything, no code or config change. |
 | **Uncertain submits** | A submit that times out is recorded `UNCERTAIN`, never written off — next run reconciles it. |
@@ -156,7 +156,7 @@ All via `.env` (gitignored):
 ```bash
 TRADE_PCT=0.02              # per-trade notional, fraction of equity
 MAX_EXPOSURE=1.0            # total committed notional ceiling
-MAX_NEW_SHORTS_PER_DAY=5
+MAX_NEW_SHORTS_PER_DAY=8
 MAX_DAILY_NOTIONAL=5000
 MAX_HTB_RATE=100            # annualized borrow % ceiling
 MAX_SPREAD_PCT=0.05         # skip wider names
