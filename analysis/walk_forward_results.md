@@ -1,116 +1,118 @@
 # Walk-Forward Validation & Extensive Grid Search
 
-_Generated 2026-07-26 | 745 historical events (2024-06-07 to 2026-07-20) | corrected engine (split-jump neutralized) | realistic entry (next-session open)_
+_Generated 2026-07-28 | 958 historical events (2024-06-07 to 2026-07-22) | corrected engine (split-jump neutralized) | realistic entry (next-session open)_
 
 **Method:** rolling 60-day out-of-sample windows. For each window, a full 4,620-permutation grid search runs on events announced strictly BEFORE that window (in-sample); the winning parameters are frozen and evaluated on the window itself (out-of-sample, never seen by the optimizer). Two selection philosophies are compared: picking the permutation with the best in-sample **return** (prone to overfitting to a few lucky trades) vs. the best in-sample **t-statistic** (favors an edge that shows up consistently, penalizes noisy small samples). Only the pooled out-of-sample numbers below should be trusted as an estimate of live performance — in-sample numbers are what the optimizer already knew and are not evidence of anything.
 
 ## Selection: Return-maximizing (`total_return_pct`)
 
-10 folds, 469 pooled out-of-sample trades.
+11 folds, 658 pooled out-of-sample trades.
 
 | Fold | Test window | In-N | Selected params | In-sample metric | OOS trades | OOS win% | OOS return% |
 |---|---|---:|---|---:|---:|---:|---:|
-| | 2024-12-27 -> 2025-02-25 | 50 | hold=day_before_split, stop=None, TP=None, gap=30%, ratio=(0,inf) | 192.67 | 34 | +79.41% | +72.63% |
-| | 2025-02-25 -> 2025-04-26 | 103 | hold=14_days_after_split, stop=None, TP=60%, gap=30%, ratio=(0,inf) | 410.40 | 62 | +64.52% | +65.28% |
-| | 2025-04-26 -> 2025-06-25 | 168 | hold=14_days_after_split, stop=None, TP=60%, gap=None, ratio=(0,inf) | 789.51 | 76 | +65.79% | -2.20% |
-| | 2025-06-25 -> 2025-08-24 | 247 | hold=day_before_split, stop=None, TP=None, gap=None, ratio=(0,inf) | 1716.98 | 68 | +80.88% | +195.18% |
-| | 2025-08-24 -> 2025-10-23 | 348 | hold=day_before_split, stop=None, TP=None, gap=None, ratio=(0,inf) | 5263.28 | 40 | +90.00% | +202.62% |
-| | 2025-10-23 -> 2025-12-22 | 398 | hold=day_before_split, stop=None, TP=None, gap=None, ratio=(0,inf) | 16130.41 | 59 | +83.05% | +320.40% |
-| | 2025-12-22 -> 2026-02-20 | 485 | hold=day_before_split, stop=None, TP=None, gap=None, ratio=(0,inf) | 68132.61 | 43 | +86.05% | +118.62% |
-| | 2026-02-20 -> 2026-04-21 | 557 | hold=day_before_split, stop=None, TP=None, gap=None, ratio=(0,inf) | 149067.70 | 41 | +73.17% | +33.68% |
-| | 2026-04-21 -> 2026-06-20 | 638 | hold=day_before_split, stop=None, TP=None, gap=None, ratio=(0,inf) | 199303.16 | 37 | +48.65% | +6.69% |
-| | 2026-06-20 -> 2026-08-19 | 716 | hold=day_before_split, stop=None, TP=None, gap=None, ratio=(0,inf) | 212652.73 | 9 | +77.78% | +3.31% |
+| | 2024-11-22 -> 2025-01-21 | 50 | hold=day_before_split, stop=None, TP=None, gap=30%, ratio=(0,inf) | 169.10 | 21 | +90.48% | +75.76% |
+| | 2025-01-21 -> 2025-03-22 | 80 | hold=day_before_split, stop=None, TP=None, gap=30%, ratio=(0,inf) | 372.96 | 41 | +80.49% | +107.27% |
+| | 2025-03-22 -> 2025-05-21 | 141 | hold=14_days_after_split, stop=None, TP=60%, gap=None, ratio=(0,inf) | 944.06 | 82 | +63.41% | +16.86% |
+| | 2025-05-21 -> 2025-07-20 | 227 | hold=day_before_split, stop=None, TP=None, gap=None, ratio=(0,inf) | 2264.13 | 78 | +74.36% | +159.06% |
+| | 2025-07-20 -> 2025-09-18 | 332 | hold=day_before_split, stop=None, TP=None, gap=None, ratio=(0,inf) | 6024.53 | 77 | +83.12% | +258.30% |
+| | 2025-09-18 -> 2025-11-17 | 437 | hold=day_before_split, stop=None, TP=None, gap=None, ratio=(0,inf) | 21844.05 | 38 | +94.74% | +238.92% |
+| | 2025-11-17 -> 2026-01-16 | 482 | hold=day_before_split, stop=None, TP=None, gap=None, ratio=(0,inf) | 74272.20 | 114 | +83.33% | +1217.22% |
+| | 2026-01-16 -> 2026-03-17 | 633 | hold=day_before_split, stop=None, TP=None, gap=None, ratio=(0,inf) | 979546.72 | 124 | +81.45% | +1337.09% |
+| | 2026-03-17 -> 2026-05-16 | 797 | hold=day_before_split, stop=None, TP=None, gap=None, ratio=(0,inf) | 14078329.48 | 58 | +84.48% | +141.18% |
+| | 2026-05-16 -> 2026-07-15 | 900 | hold=day_before_split, stop=None, TP=None, gap=None, ratio=(0,inf) | 33953747.04 | 24 | +37.50% | -0.92% |
+| | 2026-07-15 -> 2026-09-13 | 954 | hold=day_before_split, stop=None, TP=None, gap=None, ratio=(0,inf) | 33640947.80 | 1 | +0.00% | -0.07% |
 
-**Pooled out-of-sample: 469 trades, win rate 74.4%, mean return/trade +25.88%, t-stat +9.88**
-- Bootstrap 95% CI on expectancy: [+20.51%, +30.66%], P(edge>0) = 100%
+**Pooled out-of-sample: 658 trades, win rate 78.4%, mean return/trade +34.65%, t-stat +15.40**
+- Bootstrap 95% CI on expectancy: [+30.13%, +38.92%], P(edge>0) = 100%
 **Compounded equity under realistic capital constraints** (trades routinely overlap - see concurrency note below):
 
 | Max exposure | Trades taken | Trades skipped (no capital) | Final equity | Max drawdown |
 |---|---:|---:|---:|---:|
-| 100% (cash-collateralized) | 230 | 239 | $10,000 -> $58,307 (+483.1%) | -34.8% |
-| 200% | 378 | 91 | $10,000 -> $129,753 (+1197.5%) | -35.9% |
-| Unconstrained (unrealistic) | 469 | 0 | $10,000 -> $211,761 (+2017.6%) | -34.7% |
+| 100% (cash-collateralized) | 182 | 476 | $10,000 -> $77,725 (+677.2%) | -14.3% |
+| 200% | 343 | 315 | $10,000 -> $218,473 (+2084.7%) | -17.6% |
+| Unconstrained (unrealistic) | 658 | 0 | $10,000 -> $771,576 (+7615.8%) | -30.2% |
 
 **Parameter stability across folds** (how often each choice was selected):
-- hold_rule: day_before_split×8, 14_days_after_split×2
-- stop_loss: inf×10
-- take_profit: inf×8, 0.6×2
-- max_gap_up: inf×8, 0.3×2
+- hold_rule: day_before_split×10, 14_days_after_split×1
+- stop_loss: inf×11
+- take_profit: inf×10, 0.6×1
+- max_gap_up: inf×9, 0.3×2
 
-**Shortability: 259 of 469 pooled OOS trades (55%) likely NOT shortable at Schwab.**
-- Shortable-only, 100% exposure cap: 210 candidate trades, 154 taken, win rate 81.9%, mean return/trade +35.74%, compounded equity $10,000 -> $58,573 (+485.7%)
+**Shortability: 407 of 658 pooled OOS trades (62%) likely NOT shortable at Schwab.**
+- Shortable-only, 100% exposure cap: 251 candidate trades, 148 taken, win rate 86.1%, mean return/trade +43.26%, compounded equity $10,000 -> $77,212 (+672.1%)
 
-**Concurrency:** up to 86 positions open simultaneously (median 55 on days with any open) - this is why an exposure cap changes the equity curve so much above.
+**Concurrency:** up to 192 positions open simultaneously (median 89 on days with any open) - this is why an exposure cap changes the equity curve so much above.
 
-**Borrow-cost sensitivity** (100% exposure cap; median OOS holding period 27 days):
+**Borrow-cost sensitivity** (100% exposure cap; median OOS holding period 77 days):
 
 | Annual borrow rate | Mean return/trade | Compounded equity (100% cap) |
 |---|---:|---:|
-| 0% | +25.88% | $10,000 -> $58,307 (+483.1%) |
-| 10% | +24.35% | $10,000 -> $55,321 (+453.2%) |
-| 30% | +21.31% | $10,000 -> $69,333 (+593.3%) |
-| 50% | +18.26% | $10,000 -> $47,467 (+374.7%) |
-| 100% | +10.65% | $10,000 -> $28,254 (+182.5%) |
-| 200% | -4.58% | $10,000 -> $9,736 (-2.6%) |
+| 0% | +34.65% | $10,000 -> $77,725 (+677.2%) |
+| 10% | +32.37% | $10,000 -> $59,621 (+496.2%) |
+| 30% | +27.81% | $10,000 -> $54,078 (+440.8%) |
+| 50% | +23.24% | $10,000 -> $39,878 (+298.8%) |
+| 100% | +11.83% | $10,000 -> $23,438 (+134.4%) |
+| 200% | -10.99% | $10,000 -> $4,478 (-55.2%) |
 
-Exit reasons in pooled OOS trades: time_exit=427, take_profit=42
+Exit reasons in pooled OOS trades: time_exit=630, take_profit=28
 
 ## Selection: Stability-favoring (t-stat) (`t_stat`)
 
-10 folds, 551 pooled out-of-sample trades.
+11 folds, 560 pooled out-of-sample trades.
 
 | Fold | Test window | In-N | Selected params | In-sample metric | OOS trades | OOS win% | OOS return% |
 |---|---|---:|---|---:|---:|---:|---:|
-| | 2024-12-27 -> 2025-02-25 | 50 | hold=10_days_after_split, stop=None, TP=20%, gap=30%, ratio=(0,inf) | 58.98 | 50 | +90.00% | +25.58% |
-| | 2025-02-25 -> 2025-04-26 | 103 | hold=day_of_split, stop=None, TP=20%, gap=None, ratio=(0,inf) | 18.25 | 51 | +82.35% | +29.17% |
-| | 2025-04-26 -> 2025-06-25 | 168 | hold=day_of_split, stop=None, TP=20%, gap=None, ratio=(0,inf) | 12.98 | 66 | +84.85% | +48.37% |
-| | 2025-06-25 -> 2025-08-24 | 247 | hold=day_of_split, stop=None, TP=20%, gap=None, ratio=(0,inf) | 14.97 | 80 | +90.00% | +65.88% |
-| | 2025-08-24 -> 2025-10-23 | 348 | hold=day_of_split, stop=None, TP=20%, gap=None, ratio=(0,inf) | 16.15 | 42 | +92.86% | +38.33% |
-| | 2025-10-23 -> 2025-12-22 | 398 | hold=day_of_split, stop=None, TP=20%, gap=None, ratio=(0,inf) | 18.10 | 72 | +81.94% | +54.22% |
-| | 2025-12-22 -> 2026-02-20 | 485 | hold=day_of_split, stop=None, TP=20%, gap=None, ratio=(0,inf) | 19.71 | 57 | +77.19% | +31.20% |
-| | 2026-02-20 -> 2026-04-21 | 557 | hold=day_of_split, stop=None, TP=60%, gap=None, ratio=(0,inf) | 20.25 | 63 | +66.67% | +48.41% |
-| | 2026-04-21 -> 2026-06-20 | 638 | hold=day_of_split, stop=None, TP=20%, gap=None, ratio=(0,inf) | 20.58 | 52 | +57.69% | +10.72% |
-| | 2026-06-20 -> 2026-08-19 | 716 | hold=day_of_split, stop=None, TP=60%, gap=None, ratio=(0,inf) | 20.03 | 18 | +77.78% | +9.13% |
+| | 2024-11-22 -> 2025-01-21 | 50 | hold=day_of_split, stop=None, TP=20%, gap=None, ratio=(0,inf) | 62.74 | 24 | +87.50% | +17.66% |
+| | 2025-01-21 -> 2025-03-22 | 80 | hold=day_of_split, stop=None, TP=20%, gap=30%, ratio=(10,50) | 49.07 | 36 | +88.89% | +20.90% |
+| | 2025-03-22 -> 2025-05-21 | 141 | hold=day_before_split, stop=None, TP=20%, gap=None, ratio=(0,inf) | 20.68 | 55 | +78.18% | +29.81% |
+| | 2025-05-21 -> 2025-07-20 | 227 | hold=day_of_split, stop=None, TP=20%, gap=None, ratio=(0,inf) | 15.77 | 88 | +87.50% | +68.65% |
+| | 2025-07-20 -> 2025-09-18 | 332 | hold=day_of_split, stop=None, TP=20%, gap=None, ratio=(0,inf) | 16.31 | 85 | +88.24% | +44.10% |
+| | 2025-09-18 -> 2025-11-17 | 437 | hold=day_of_split, stop=None, TP=20%, gap=None, ratio=(50,inf) | 19.03 | 4 | +100.00% | +3.75% |
+| | 2025-11-17 -> 2026-01-16 | 482 | hold=day_of_split, stop=None, TP=20%, gap=None, ratio=(50,inf) | 20.48 | 15 | +93.33% | +12.25% |
+| | 2026-01-16 -> 2026-03-17 | 633 | hold=day_of_split, stop=None, TP=60%, gap=None, ratio=(0,inf) | 21.78 | 143 | +77.62% | +713.53% |
+| | 2026-03-17 -> 2026-05-16 | 797 | hold=day_of_split, stop=None, TP=60%, gap=None, ratio=(0,inf) | 24.63 | 82 | +76.83% | +155.05% |
+| | 2026-05-16 -> 2026-07-15 | 900 | hold=day_of_split, stop=None, TP=60%, gap=None, ratio=(0,inf) | 25.38 | 26 | +61.54% | +10.05% |
+| | 2026-07-15 -> 2026-09-13 | 954 | hold=day_of_split, stop=None, TP=60%, gap=None, ratio=(0,inf) | 25.16 | 2 | +0.00% | -0.89% |
 
-**Pooled out-of-sample: 551 trades, win rate 80.4%, mean return/trade +11.01%, t-stat +13.18**
-- Bootstrap 95% CI on expectancy: [+9.32%, +12.56%], P(edge>0) = 100%
+**Pooled out-of-sample: 560 trades, win rate 81.4%, mean return/trade +17.33%, t-stat +14.43**
+- Bootstrap 95% CI on expectancy: [+14.87%, +19.61%], P(edge>0) = 100%
 **Compounded equity under realistic capital constraints** (trades routinely overlap - see concurrency note below):
 
 | Max exposure | Trades taken | Trades skipped (no capital) | Final equity | Max drawdown |
 |---|---:|---:|---:|---:|
-| 100% (cash-collateralized) | 506 | 45 | $10,000 -> $130,770 (+1207.7%) | -12.0% |
-| 200% | 551 | 0 | $10,000 -> $165,763 (+1557.6%) | -12.0% |
-| Unconstrained (unrealistic) | 551 | 0 | $10,000 -> $165,763 (+1557.6%) | -12.0% |
+| 100% (cash-collateralized) | 333 | 227 | $10,000 -> $101,842 (+918.4%) | -3.5% |
+| 200% | 494 | 66 | $10,000 -> $208,447 (+1984.5%) | -16.5% |
+| Unconstrained (unrealistic) | 560 | 0 | $10,000 -> $305,149 (+2951.5%) | -16.5% |
 
 **Parameter stability across folds** (how often each choice was selected):
-- hold_rule: day_of_split×9, 10_days_after_split×1
-- stop_loss: inf×10
-- take_profit: 0.2×8, 0.6×2
-- max_gap_up: inf×9, 0.3×1
+- hold_rule: day_of_split×10, day_before_split×1
+- stop_loss: inf×11
+- take_profit: 0.2×7, 0.6×4
+- max_gap_up: inf×10, 0.3×1
 
-**Shortability: 304 of 551 pooled OOS trades (55%) likely NOT shortable at Schwab.**
-- Shortable-only, 100% exposure cap: 247 candidate trades, 247 taken, win rate 86.2%, mean return/trade +12.70%, compounded equity $10,000 -> $44,520 (+345.2%)
+**Shortability: 361 of 560 pooled OOS trades (64%) likely NOT shortable at Schwab.**
+- Shortable-only, 100% exposure cap: 199 candidate trades, 199 taken, win rate 85.9%, mean return/trade +16.87%, compounded equity $10,000 -> $44,175 (+341.8%)
 
-**Concurrency:** up to 39 positions open simultaneously (median 13 on days with any open) - this is why an exposure cap changes the equity curve so much above.
+**Concurrency:** up to 84 positions open simultaneously (median 24 on days with any open) - this is why an exposure cap changes the equity curve so much above.
 
-**Borrow-cost sensitivity** (100% exposure cap; median OOS holding period 5 days):
+**Borrow-cost sensitivity** (100% exposure cap; median OOS holding period 11 days):
 
 | Annual borrow rate | Mean return/trade | Compounded equity (100% cap) |
 |---|---:|---:|
-| 0% | +11.01% | $10,000 -> $130,770 (+1207.7%) |
-| 10% | +10.61% | $10,000 -> $119,798 (+1098.0%) |
-| 30% | +9.80% | $10,000 -> $103,328 (+933.3%) |
-| 50% | +8.99% | $10,000 -> $88,757 (+787.6%) |
-| 100% | +6.97% | $10,000 -> $56,987 (+469.9%) |
-| 200% | +2.92% | $10,000 -> $20,486 (+104.9%) |
+| 0% | +17.33% | $10,000 -> $101,842 (+918.4%) |
+| 10% | +16.45% | $10,000 -> $90,548 (+805.5%) |
+| 30% | +14.71% | $10,000 -> $81,144 (+711.4%) |
+| 50% | +12.97% | $10,000 -> $67,668 (+576.7%) |
+| 100% | +8.62% | $10,000 -> $44,545 (+345.5%) |
+| 200% | -0.09% | $10,000 -> $13,875 (+38.7%) |
 
-Exit reasons in pooled OOS trades: take_profit=346, time_exit=205
+Exit reasons in pooled OOS trades: take_profit=324, time_exit=236
 
 ## Baseline: published strategy, frozen, no re-optimization
 
-Same period (2024-12-27 -> 2026-08-19), applying the original published 'Optimal Safe' strategy (day_of_split / 40% stop / no TP / 30% gap filter) with NO per-fold re-optimization — i.e., what happens if you just trade the original recipe blindly:
+Same period (2024-11-22 -> 2026-09-13), applying the original published 'Optimal Safe' strategy (day_of_split / 40% stop / no TP / 30% gap filter) with NO per-fold re-optimization — i.e., what happens if you just trade the original recipe blindly:
 
-- trades=537, win_rate=+58.66%, total_return=+1123.46%, maxDD=-16.59%
+- trades=729, win_rate=+58.30%, total_return=+11035.57%, maxDD=-18.53%
 
 ## Bottom line
 

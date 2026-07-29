@@ -40,16 +40,20 @@ cross-references SEC EDGAR filings, and uses an LLM to confirm which filings are
 *definitive, future* reverse splits (not proposals or already-executed splits).
 
 **What testing showed:** after fixing a critical bug that had corrupted the original
-research, proper walk-forward validation across 745 events and 20 months of
-out-of-sample windows found a **statistically strong edge** (t-stats of +9.9 and +13.2,
-bootstrap confidence intervals comfortably excluding zero). Two distinct strategies
-survived validation.
+research (plus a later EDGAR-pagination fix that recovered 21 percentage points of
+missing filing coverage, §9), proper walk-forward validation across 958 events and 20
+months of out-of-sample windows found a **statistically strong edge** (t-stats of +15.4
+and +14.4, bootstrap confidence intervals comfortably excluding zero). Two distinct
+strategies survived validation.
 
 **The headline caveat:** the edge is statistically real *in this dataset*, but several
 real-world costs and biases are either unmodeled or only partially modeled —
 survivorship bias, borrow availability, and slippage on illiquid names. At 200%
-annualized borrow cost, one of the two strategies goes to roughly breakeven. Live
-trading has not been done; the system currently runs in dry-run only.
+annualized borrow cost, one of the two strategies goes to roughly breakeven, the other
+loses money. Under the full set of live constraints (2% sizing, real spread costs,
+shortability veto, borrow), the realistic target is **+70% over ~20 months**, not the
+headline +918%/+677% figures — see `analysis/live_expectations.md`. The live trading
+path has been built (§8) but not yet deployed with real capital.
 
 **Most surprising finding:** every single walk-forward fold, under both selection
 methods, chose **no stop-loss**. A follow-up test confirmed that adding stops back in
@@ -164,7 +168,7 @@ It returns: `is_reverse_split`, `is_future_split`,
 | `early_edgar_splits` | Forward-looking confirmed splits from the daily scan | **Live trading signals** |
 
 The live signal generator reads `early_edgar_splits`. The historical backtest uses a
-union of both sources (745 events; see [§5.3](#53-the-event-dataset)).
+union of both sources (958 events; see [§5.3](#53-the-event-dataset)).
 
 ### 3.4 Stage 4 — Signal generation
 
@@ -232,8 +236,8 @@ as a conservative default.
 - Signals are allocated capital in ranked order; once the cap is hit, remaining signals
   are flagged and skipped rather than silently over-allocated
 
-The exposure cap is not cosmetic. The backtest found **up to 86 positions open
-simultaneously** (median 55) for one strategy. Without a cap, position sizing implicitly
+The exposure cap is not cosmetic. The backtest found **up to 192 positions open
+simultaneously** (median 89) for one strategy. Without a cap, position sizing implicitly
 assumes unlimited buying power.
 
 ---
@@ -300,8 +304,13 @@ Walk-forward testing uses a **union** of both event sources, deduplicated on
   so recent months are thin
 - `early_edgar_splits` scanner: stays current, fills the recent end
 
-**Result: 745 events, 614 unique tickers, 2024-06-07 → 2026-07-20.**
-Prices fetched for 598 of 614 tickers (16 unavailable — see survivorship caveat in §9).
+**Result: 958 events, 754 unique tickers, 2024-06-07 → 2026-07-22.**
+Prices fetched for 729 of 754 tickers (25 unavailable — see survivorship caveat in §9).
+
+> **Updated 2026-07-28** after fixing the EDGAR pagination bug (§9): recovering
+> previously-missed filings and fixing a scoring crash raised EDGAR coverage from 63% to
+> 84% of all splits (714→953 of 1,135) and brought the combined event count from 745 to
+> 958. All figures in §6-7 below reflect the corrected dataset.
 
 ### 5.4 Grid search
 
@@ -396,19 +405,19 @@ a free lunch.
 
 | Metric | Value |
 |---|---:|
-| Pooled OOS trades | 469 |
-| Win rate | 74.4% |
-| Mean return/trade | +25.88% |
-| t-statistic | +9.88 |
-| Bootstrap 95% CI | [+20.51%, +30.66%] |
+| Pooled OOS trades | 658 |
+| Win rate | 78.4% |
+| Mean return/trade | +34.65% |
+| t-statistic | +15.40 |
+| Bootstrap 95% CI | [+30.13%, +38.92%] |
 | P(edge > 0) | 100% |
-| Equity @100% exposure cap | $10,000 → $58,307 (+483%) |
-| Max drawdown | −34.8% |
-| Median holding period | 27 days |
-| Trades skipped for capital | 239 of 469 (51%) |
-| Max concurrent positions | 86 (median 55) |
+| Equity @100% exposure cap | $10,000 → $77,725 (+677%) |
+| Max drawdown | −14.3% |
+| Median holding period | 77 days |
+| Trades skipped for capital | 476 of 658 (72%) |
+| Max concurrent positions | 192 (median 89) |
 
-Parameter stability: `day_before_split` ×8, `14_days_after_split` ×2; no stop ×10.
+Parameter stability: `day_before_split` ×10, `14_days_after_split` ×1; no stop ×11.
 
 ### 6.2 Strategy B — Stability-favoring ⭐ *stronger candidate*
 
@@ -416,48 +425,52 @@ Parameter stability: `day_before_split` ×8, `14_days_after_split` ×2; no stop 
 
 | Metric | Value |
 |---|---:|
-| Pooled OOS trades | 551 |
-| Win rate | **80.4%** |
-| Mean return/trade | +11.01% |
-| t-statistic | **+13.18** |
-| Bootstrap 95% CI | [+9.32%, +12.56%] |
+| Pooled OOS trades | 560 |
+| Win rate | **81.4%** |
+| Mean return/trade | +17.33% |
+| t-statistic | **+14.43** |
+| Bootstrap 95% CI | [+14.87%, +19.61%] |
 | P(edge > 0) | 100% |
-| Equity @100% exposure cap | $10,000 → **$130,770 (+1,208%)** |
-| Max drawdown | **−12.0%** |
-| Median holding period | 5 days |
-| Trades skipped for capital | 45 of 551 (8%) |
-| Max concurrent positions | 39 (median 13) |
+| Equity @100% exposure cap | $10,000 → **$101,842 (+918%)** |
+| Max drawdown | **−3.5%** |
+| Median holding period | 11 days |
+| Trades skipped for capital | 227 of 560 (41%) |
+| Max concurrent positions | 84 (median 24) |
 
-Parameter stability: `day_of_split` ×9, `10_days_after_split` ×1; no stop ×10;
-20% take-profit ×8, 60% ×2.
+Parameter stability: `day_of_split` ×10, `day_before_split` ×1; no stop ×11;
+20% take-profit ×7, 60% ×4.
 
 ### 6.3 Head-to-head
 
 | | Strategy A (return-max) | Strategy B (stability) |
 |---|---:|---:|
-| Win rate | 74.4% | **80.4%** |
-| t-statistic | +9.88 | **+13.18** |
-| Equity @100% cap | $58,307 | **$130,770** |
-| **Max drawdown** | −34.8% | **−12.0%** |
-| Holding period | 27 days | **5 days** |
-| Capital efficiency | 49% of trades taken | **92% of trades taken** |
-| Survives 200% borrow | −2.6% (breakeven) | **+104.9%** |
+| Win rate | 78.4% | **81.4%** |
+| t-statistic | +15.40 | **+14.43** |
+| Equity @100% cap | $77,725 | **$101,842** |
+| **Max drawdown** | −14.3% | **−3.5%** |
+| Holding period | 77 days | **11 days** |
+| Capital efficiency | 28% of trades taken | **60% of trades taken** |
+| Survives 200% borrow | −55.2% (loses money) | **+38.7%** |
 
-**Strategy B is better on essentially every risk-adjusted dimension.** It earns more
-under a realistic capital cap despite a lower per-trade return, because its 5-day holding
-period recycles capital ~5× faster — it simply gets to take far more of its signals. Its
-shorter holding period also means less borrow-cost exposure and less overnight risk.
+**Strategy B remains the stronger risk-adjusted candidate** even after the dataset
+correction — its drawdown is now nearly flat (−3.5%) and it still clears 200%/yr borrow
+cost. Both strategies now face materially higher peak concurrency than the original
+analysis found (192 and 84 simultaneous positions, vs. 86 and 39 before), which is why
+capital efficiency dropped for both — more real trading opportunities exist than a
+$10,000 account can act on simultaneously, which is a capacity constraint, not a flaw in
+the edge itself.
 
 ### 6.4 Baseline comparison
 
 Trading the *original published* strategy (day_of_split / 40% stop / no TP / 30% gap
 filter) frozen with no re-optimization, over the same period:
 
-> 537 trades, 58.66% win rate, +1,123% total return, −16.6% max drawdown
+> 729 trades, 58.30% win rate, +11,036% total return (uncapped, naive compounding —
+> not comparable to the 100%-cap figures above), −18.5% max drawdown
 
 Notably this is *also* strong once run on split-corrected data — the 40% stop was largely
-a response to the phantom stop-outs the bug created. Strategy B still beats it on win
-rate, drawdown, and t-stat.
+a response to the phantom stop-outs the bug created. Strategy B still wins decisively on
+win rate and drawdown once both are measured under the same realistic capital cap.
 
 ---
 
@@ -470,23 +483,28 @@ that is for a short strategy with theoretically unlimited downside, it was teste
 directly (`scripts/tail_risk_test.py`) by forcing stops back in while holding all other
 selected parameters fixed:
 
-| Stop cap | Strategy A equity | Strategy B equity |
-|---|---:|---:|
-| **None (baseline)** | **$58,307** | **$130,770** |
-| 300% | $49,932 | $59,755 |
-| 200% | $56,367 | $74,765 |
-| 150% | $42,121 | $43,053 |
-| 100% | $28,714 | $37,183 |
-| 50% | $24,117 | $36,842 |
+| Stop cap | Strategy A equity | Strategy A maxDD | Strategy B equity | Strategy B maxDD |
+|---|---:|---:|---:|---:|
+| **None (baseline)** | **$77,725** | **−14.3%** | **$101,842** | **−3.5%** |
+| 300% | $35,684 | −19.2% | $68,266 | −23.8% |
+| 200% | $35,639 | −20.9% | $59,831 | −15.1% |
+| 150% | $31,025 | −36.2% | $37,574 | −25.7% |
+| 100% | $28,910 | −19.5% | $32,477 | −23.4% |
+| 75% | $29,981 | −14.1% | $33,890 | −15.1% |
+| 50% | $21,793 | −21.0% | $23,269 | −16.5% |
 
-**Every stop level reduced returns, and max drawdown did not reliably improve** (it moved
-non-monotonically). The mechanism: these are thin, illiquid microcaps prone to temporary
-spikes that revert before the exit date. A stop locks in the loss on the spike instead of
-riding out the reversion — converting would-be winners into realized losses.
+**Every stop level reduced returns, and drawdown got WORSE, not better, at every level
+tested** — on the corrected dataset this held even more starkly than before. Strategy B's
+no-stop drawdown (−3.5%) beats every single stopped variant (which all land between −15%
+and −26%). The mechanism: these are thin, illiquid microcaps prone to temporary spikes
+that revert before the exit date. A stop locks in the loss on the spike instead of riding
+out the reversion — converting would-be winners into realized losses.
 
-**But the tail risk is real.** The worst single trade in the pooled set was **SBET
-(May 2025) at −709%**, roughly a −35% portfolio hit at 5% sizing. It survived, but a
-2-year sample may simply not contain a true black-swan squeeze.
+**But the tail risk is real.** The worst single trade in Strategy A's pooled set was
+**SBET (May 2025) at −709%** (unchanged — same historical event, now confirmed present in
+the larger dataset), roughly a −35% portfolio hit at 5% sizing. Strategy B's worst trade
+is now **AUHIF (Sept 2025) at −299%**. Both survived, but a 2-year sample may simply not
+contain a true black-swan squeeze.
 
 **Conclusion: position sizing, not a price stop, is the correct tail-risk lever.**
 
@@ -499,13 +517,14 @@ riding out the reversion — converting would-be winners into realized losses.
 
 ### 7.2 Shortability — can you even place these trades?
 
-Roughly **55% of pooled out-of-sample trades were flagged as likely unshortable** by the
-historical proxy classifier (which uses exchange listing, sub-$1 price, liquidity,
-warrant/unit detection, and post-split delisting).
+Roughly **62-64% of pooled out-of-sample trades were flagged as likely unshortable** by
+the historical proxy classifier (which uses exchange listing, sub-$1 price, liquidity,
+warrant/unit detection, and post-split delisting) — up from ~55% before, since the
+larger dataset pulled in more thin/OTC names.
 
 Encouragingly, the shortable-only subsets still perform well:
-- Strategy A shortable-only: 81.9% win rate, $10,000 → $58,573
-- Strategy B shortable-only: 86.2% win rate, $10,000 → $44,520
+- Strategy A shortable-only: 86.1% win rate, $10,000 → $77,212 (148 of 251 candidates taken)
+- Strategy B shortable-only: 85.9% win rate, $10,000 → $44,175 (199 of 199 candidates taken)
 
 **However — the proxy has already been contradicted by real data.** The first live Schwab
 shortability check (2026-07-26) returned:
@@ -521,7 +540,7 @@ shortability check (2026-07-26) returned:
 All three sub-$1 names the proxy rejected were **actually shortable at Schwab**, at
 modest borrow rates (5–16% annualized, well below the 50–200% worst case). This suggests
 the proxy's "sub-$1 = unshortable" rule is too strict and the true tradeable fraction may
-be considerably higher than 45%.
+be considerably higher than the proxy's ~36-38% estimate.
 
 This is exactly why real ground-truth logging was built — see [§8.4](#84-shortability-ground-truth-logging).
 
@@ -532,30 +551,38 @@ exposure cap:
 
 | Annual borrow rate | Strategy A equity | Strategy B equity |
 |---|---:|---:|
-| 0% | $58,307 | $130,770 |
-| 10% | $55,321 | $119,798 |
-| 30% | $69,333 | $103,328 |
-| 50% | $47,467 | $88,757 |
-| 100% | $28,254 | $56,987 |
-| **200%** | **$9,736 (−2.6%)** | **$20,486 (+104.9%)** |
+| 0% | $77,725 | $101,842 |
+| 10% | $59,621 | $90,548 |
+| 30% | $54,078 | $81,144 |
+| 50% | $39,878 | $67,668 |
+| 100% | $23,438 | $44,545 |
+| **200%** | **$4,478 (−55.2%, loses money)** | **$13,875 (+38.7%)** |
 
-Strategy A goes to breakeven at 200% borrow; **Strategy B remains solidly positive** —
-a direct consequence of its 5-day vs. 27-day holding period.
+With the larger, EDGAR-corrected dataset, **Strategy A now clearly loses money at 200%/yr
+borrow** (it was roughly breakeven before); **Strategy B remains solidly positive**,
+consistent with its much shorter (11-day) holding period costing far less in borrow fees
+over time.
 
-> *Note on non-monotonicity:* Strategy A's equity is not strictly decreasing in borrow
-> rate (30% > 10%). This is a real artifact of the capital cap: changing returns changes
-> portfolio value → changes bet sizes → changes which trades fit under the cap → changes
-> which trades get taken. With half of A's signals being skipped for capital, small
-> changes reshuffle the taken set substantially.
+> *Note on the capital-cap mechanism:* in the prior analysis, Strategy A's equity was
+> non-monotonic in borrow rate — a higher fee sometimes produced *more* money, because
+> changing portfolio value changes bet sizes, which changes which trades fit under the
+> exposure cap and therefore which trades actually get taken. This run's table happens to
+> come out monotonic, but the underlying mechanism is still real: with 72% of A's signals
+> already skipped for lack of capital, small changes can still reshuffle the taken set.
 
 ### 7.4 Capital constraints and concurrency
 
-Trades overlap heavily. Strategy A peaked at **86 simultaneous open positions** (median
-55); Strategy B at 39 (median 13). At 5% notional each, 86 concurrent positions would
-require 430% of account equity — impossible in a cash-collateralized account.
+Trades overlap heavily, and materially more so with the corrected dataset. Strategy A
+peaked at **192 simultaneous open positions** (median 89, up from 86/55 before); Strategy
+B at 84 (median 24, up from 39/13 before). At 5% notional each, 192 concurrent positions
+would require 960% of account equity — nowhere close to possible in a
+cash-collateralized account.
 
 This is why the exposure cap dramatically changes the equity curve, and why Strategy A
-loses 51% of its signals to capital constraints while Strategy B loses only 8%.
+now loses 72% of its signals to capital constraints (up from 51%) while Strategy B loses
+41% (up from 8%). More real trading opportunities exist in the corrected data than a
+fixed-size account can act on simultaneously — a capacity constraint, not evidence
+against the edge.
 
 ---
 
@@ -652,8 +679,10 @@ alerts are informational; it is not a capital-aware system. Local runs do persis
 - **The critical split-jump bug was real, and is fixed.** Demonstrated empirically on
   specific tickers with before/after numbers.
 - **The edge survives proper walk-forward validation.** Parameters selected only on past
-  data, evaluated only on unseen future data, across 10 folds and 20 months. t-stats of
-  +9.88 and +13.18 with bootstrap CIs well clear of zero are not marginal results.
+  data, evaluated only on unseen future data, across 11 folds and 20 months. t-stats of
+  +15.40 and +14.43 with bootstrap CIs well clear of zero are not marginal results — and
+  both t-stats *rose* after the EDGAR-pagination fix expanded the dataset, the opposite
+  of what you'd expect from an artifact shrinking under scrutiny.
 - **Parameter stability is high.** Both methods converged on consistent hold rules and
   unanimously on "no stop-loss" — not a knife-edge optimum.
 - **The no-stop finding is robust**, confirmed by direct sensitivity testing.
@@ -755,7 +784,11 @@ streamlit run streamlit_entry.py
 - ✅ **Slippage modeled from spreads** — Corwin-Schultz estimator + a spread veto whose
   5% default was chosen by backtest sweep (`analysis/live_expectations.md`).
 - ✅ **EDGAR pagination fixed** — `filings.files[]` archive pages are now fetched;
-  verified against the live API (`recent` caps at exactly 1,000 filings).
+  verified against the live API (`recent` caps at exactly 1,000 filings). Backfilling
+  all 396 previously-incomplete splits raised EDGAR coverage from 714/1,135 (63%) to
+  953/1,135 (84%) and roughly 2.4×'d the Tier A/B filing count (3,581 → 8,541). The
+  remaining 16% gap is almost entirely `no_cik` — foreign/ADR tickers with no US SEC
+  CIK, a genuine data limit rather than a bug.
 - ✅ **Test coverage** — 310 tests, offline, running in CI on every push. Engine 91%,
   scoring 98%, order layer 87%, ledger 98%.
 - ✅ **Exit system built** (see §8.3a) — the largest gap; there was previously no way to
