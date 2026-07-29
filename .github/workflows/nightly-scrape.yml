@@ -55,21 +55,9 @@ jobs:
         run: |
           python scripts/scan_early_edgar.py
 
-      - name: Run daily signal report (SMS alert)
-        # run_signals.py cannot place an order by construction - it has no order code
-        # at all. Trading lives in run_trading.py, which only runs on a machine with a
-        # persistent Schwab token and position ledger (docs/LIVE_DEPLOYMENT.md).
-        #
-        # --no-schwab-check because CI has no cached token; the OAuth login is
-        # interactive and expires every 7 days. This step is also stateless: the
-        # position ledger doesn't persist across CI runs, so committed capital reads as
-        # $0 here. Treat these alerts as "a signal fired", not as portfolio state.
-        env:
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
-        run: |
-          python scripts/run_signals.py --min-confidence High --no-schwab-check
+      # No signal/SMS step here on purpose: run_trading.py on the user's PC
+      # (docs/LIVE_DEPLOYMENT.md, Task Scheduler ~9:25am ET weekdays) is now the single
+      # source of signal alerts, dry-run and eventually live alike. Running a second,
+      # separate alerting path here would double-text on the same signal and would be
+      # stateless (no persistent position ledger in CI) unlike the real one. This job's
+      # only remaining purpose is data collection: scrapers -> EDGAR enrichment -> scan.

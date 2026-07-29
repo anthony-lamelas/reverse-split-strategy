@@ -43,8 +43,10 @@ Thumbs.db
 DATA/prices_recent.pkl
 DATA/prices_full.pkl
 
-# Daily signal run logs
+# Daily signal run logs and operational runtime logs (local state, not source)
 logs/signals_*.json
+logs/trading_audit.jsonl
+logs/task_scheduler.log
 
 # Local open-positions ledger (operational state, not source data)
 DATA/open_positions_*.json
