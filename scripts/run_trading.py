@@ -90,6 +90,12 @@ def do_login() -> int:
     except SchwabAuthError as e:
         print(f"[login] {e}")
         return 1
+    except Exception as e:
+        # Defense in depth: get_client() now validates the token itself, so this
+        # shouldn't be reachable - but a raw crash here is a bad failure mode for an
+        # interactive command, so surface it cleanly instead of a traceback.
+        print(f"[login] unexpected error: {e}")
+        return 1
 
 
 def token_age_days() -> float | None:

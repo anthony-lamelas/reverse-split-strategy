@@ -55,17 +55,25 @@ def get_client(interactive: bool = False):
 
     if token_path.exists():
         try:
-            return client_from_token_file(
+            client = client_from_token_file(
                 token_path=str(token_path),
                 api_key=config.SCHWAB_APP_KEY,
                 app_secret=config.SCHWAB_APP_SECRET,
             )
+            # schwab-py does NOT validate the token at construction time - it only
+            # attempts a refresh lazily, on the caller's first real API call. Force
+            # that here with a cheap read, so an expired/invalid refresh token is
+            # caught in THIS try/except (and falls through to interactive login below)
+            # instead of raising an uncaught authlib OAuthError deep inside whatever
+            # the caller does first.
+            client.get_account_numbers()
+            return client
         except Exception as e:
-            # Most commonly: refresh token older than 7 days -> invalid_client.
+            # Most commonly: refresh token older than 7 days -> invalid_grant.
             if not interactive:
                 raise SchwabAuthError(
                     f"Cached Schwab token is invalid/expired ({e}). Re-run the login "
-                    "flow: python scripts/run_signals.py --login"
+                    "flow: python scripts/run_trading.py --login"
                 ) from e
             # fall through to interactive login below
 
