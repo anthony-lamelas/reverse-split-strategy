@@ -77,10 +77,17 @@ number (`analysis/strategy.md`, the old notebook) is **unreliable** — don't ci
 
 - **Mode: dry-run only.** `--live` exists and is fully wired but has never been used
   with real money. Requires both `--live` **and** `--i-am-sure`.
-- **Task Scheduler:** `ReverseSplitDryRun` task exists and is confirmed working
-  (`LastTaskResult=0`). Runs weekdays 6:25am PDT. Was recently changed to "run whether
-  user is logged on or not" (user did this manually, entering their own Windows
-  password directly into the Windows prompt — not something Claude ever handled).
+- **Task Scheduler:** `ReverseSplitDryRun` task exists and fires. Set to weekdays
+  9:25am ET; **should be set to repeat every 5 min for 25 min** (see
+  `docs/LIVE_DEPLOYMENT.md` §3c) so a late wake still catches the open. Runs "whether
+  user is logged on or not" (user set this up manually, entering their own Windows
+  password into the Windows prompt — not something Claude ever handled).
+  `LastTaskResult=0` no longer means "healthy": exit codes 4 and 5 now signal a
+  mistimed or blind run, and the run refuses to trade rather than trading late.
+- **Watchdog:** `.github/workflows/trading-watchdog.yml` runs weekdays 15:00 UTC on
+  GitHub's infrastructure and fails (→ GitHub emails you) if no healthy in-window
+  heartbeat exists for today. It lives off this PC deliberately — every other alert is
+  sent *by* the trading run, so a host that never wakes can never report itself.
 - **Schwab auth:** token lives at `.schwab_token.json` (gitignored). **Expires every 7
   days, hard limit, no way around it** — refresh with:
   ```bash
@@ -90,6 +97,11 @@ number (`analysis/strategy.md`, the old notebook) is **unreliable** — don't ci
   A bug where this crashed with an uncaught `OAuthError` on an expired token was fixed
   2026-07-29 (`src/split_strategy/broker/schwab_auth.py`) — `get_client()` now validates
   the cached token eagerly instead of only at first real use.
+  **The 2-day expiry warning has never fired until now** (fixed 2026-08-19): it derived
+  token age from the file's *mtime*, but the file is rewritten every ~30 min on access
+  refresh, so the age was pinned near zero. It now reads `creation_timestamp` from
+  inside the token. This is why the login silently lapsed twice (Aug 4–10, Aug 17–19),
+  during which every run placed nothing and still exited 0.
 - **SMS alerts:** working, one text per signal (not bundled), via carrier
   email-to-SMS gateway. `.env` has `SMTP_*` + `ALERT_EMAIL_TO` configured locally (not
   in git). GitHub Actions no longer sends alerts — that was a duplicate path, removed;
@@ -148,11 +160,23 @@ GitHub repo secrets mirror the subset the CI/data-collection workflow needs (`MO
    of data points so far.
 3. **Survivorship bias unaddressed** — yfinance drops delisted tickers; a paid data
    source (e.g. Polygon) would fix this but was explicitly out of scope this round.
-4. Two other repo-quality items flagged in `docs/VALIDATION_REPORT.md` remain (calendar-
-   vs-trading-day mislabeling in `returns.py`, a tz-aware/naive comparison bug) — low
-   severity, not blocking.
+4. ~~Two other repo-quality items in `docs/VALIDATION_REPORT.md`~~ — **fixed 2026-08-19.**
+   Return windows now step over trading bars instead of calendar days, and the
+   tz-aware/naive comparison is resolved. Both were display-only (`returns.py` is
+   imported solely by `ui/dashboard.py`), so no strategy number changed.
 5. `DATA/shortability_ground_truth.csv` shows as locally modified in git right now
    (growing log file) — fine to commit whenever, not urgent.
+6. **Wake reliability is still unproven** (opened 2026-08-19). The scheduled task never
+   woke the machine once in the 12 days of event log examined — every "late" run was the
+   task catching up seconds after a lid-open. DC wake timers were disabled and have been
+   enabled, but the machine was likely on AC (where they were *already* enabled) during
+   those sleeps, so the fix is unconfirmed. Modern Standby (`S0 Low Power Idle`) makes
+   scheduled-task wake unreliable regardless. Watch whether runs land at 09:25; if they
+   don't, the answer is an always-on host. The code no longer depends on this being
+   right — it halts and pages instead.
+7. **Survivorship is now measured, not corrected** (2026-08-19). `scripts/build_prices.py`
+   appends to `DATA/survivorship_coverage.csv`: how many events had no price data and
+   which tickers. A real fix still needs a point-in-time source (Polygon/CRSP).
 
 ## A note on how this project talks about itself
 

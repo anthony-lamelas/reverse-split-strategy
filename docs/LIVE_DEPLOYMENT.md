@@ -60,9 +60,33 @@ Create a task that runs **weekdays at 9:25am ET**, ~5 minutes before the open:
 - **Start in:** `C:\Coding\reverse-split-strategy`
 - Check **"Run whether user is logged on or not"**
 - Check **"Wake the computer to run this task"**
+- Set the trigger to **repeat every 5 minutes for 25 minutes** (so 09:25–09:50)
 
-> **The PC must be awake.** A sleeping machine silently skips the day — including exits
-> for positions you already hold. See §6 for how to detect a missed run.
+Repeating matters: if the host wakes at 09:31 a single 09:25 trigger has already been
+missed, but a repeating one still trades near the open. Repeats are safe — one live
+position per ticker, and the ledger is flushed to disk *before* any order can reach the
+broker, so a crash mid-submit cannot produce a second short.
+
+```powershell
+# Re-register the repetition on an existing task
+$t = Get-ScheduledTask -TaskName "ReverseSplitDryRun"
+$t.Triggers[0].Repetition.Interval = "PT5M"
+$t.Triggers[0].Repetition.Duration = "PT25M"
+Set-ScheduledTask -TaskName "ReverseSplitDryRun" -Trigger $t.Triggers[0]
+```
+
+> **The PC must be awake — and "Wake the computer" is not enough on its own.**
+> Wake timers are ignored on battery unless enabled, and are unreliable in Modern
+> Standby (`S0 Low Power Idle`) regardless of the setting. Verify with:
+>
+> ```powershell
+> powercfg /query SCHEME_CURRENT SUB_SLEEP RTCWAKE   # 0x1 = enabled, per AC/DC
+> powercfg /waketimers                               # needs an ELEVATED prompt
+> ```
+>
+> Do not rely on this alone. Two independent guards exist because it failed for weeks
+> undetected: the run refuses to trade outside the entry window (§4), and an
+> off-machine watchdog reports a missed session (§6).
 
 Why 9:25am and not 5am: before the open there is no current quote. The old code took
 *yesterday's* open as "current price," so the gap-up filter compared the wrong days and
@@ -84,6 +108,22 @@ position sizes were computed from a >24h-stale price.
 | **Cancel-before-cover** | On the exit date the resting take-profit is cancelled *first*. If the cancel fails, **no cover is sent** — filling both would flip you long. |
 | **Kill switch** | A file named `STOP` in the repo root halts everything, no code or config change. |
 | **Uncertain submits** | A submit that times out is recorded `UNCERTAIN`, never written off — next run reconciles it. |
+| **Entry window** | In `--live`, a run firing outside 09:15–09:45 ET halts entirely (exit 4). Strategy B enters *at the open*; a run at 12:15 is not that trade. Dry-run continues but tags the report `OUT_OF_WINDOW`. |
+| **No-quote halt** | If there is work to do and no market data (usually an expired login), the run halts with exit 5 instead of skipping everything and reporting success. |
+| **Write-ahead ledger** | The intent to enter or cover is flushed to disk *before* the order can reach the broker, so a crash mid-submit cannot leave a real position unrecorded. |
+| **Ambiguous-cover halt** | A cover written ahead but never assigned an order id halts the next run — covering twice would flip you long. |
+| **Stranded-position alert** | Any halt that leaves a position past its cover date texts you the tickers to cover manually. |
+
+**Exit codes** (Task Scheduler records these as `LastTaskResult`):
+
+| Code | Meaning |
+|---|---|
+| 0 | Clean run |
+| 1 | Auth, equity, or reconciliation failure |
+| 2 | `--live` without `--i-am-sure` |
+| 3 | `STOP` kill-switch present |
+| 4 | Ran outside the entry window (live only) |
+| 5 | No live quotes — nothing could be entered or covered |
 
 ### Emergency stop
 ```bash
@@ -129,9 +169,25 @@ Contains mode, equity, discrepancies, every entry/exit, and all notes.
 → `PENDING_EXIT` → `CLOSED`. Anything not `CLOSED` still ties up capital and still owes
 an exit.
 
-**Detecting a missed run:** if the newest line in `trading_audit.jsonl` isn't from today
-and the market was open, the task didn't fire — usually a sleeping PC. Cover anything
-overdue manually, or just run the script; overdue exits are retried, not abandoned.
+**Detecting a missed run — automatically.** Every session writes a heartbeat to MongoDB
+(`trading_heartbeats`), including halted ones. The **Trading Watchdog** GitHub Action
+runs weekdays at 15:00 UTC and *fails the workflow* if today has no healthy in-window
+heartbeat; GitHub emails you on workflow failure, so this needs no SMTP secrets.
+
+It lives off this machine on purpose. Every other alert is sent *by* the trading run,
+so the one thing the run can never report is that it never ran — a laptop asleep at
+09:25 executes no code and sends no SMS. That is exactly how the job drifted to 12:15,
+17:07 and even 23:32 ET for weeks in August 2026 without anyone being told.
+
+```bash
+# Check any date by hand
+python scripts/check_heartbeat.py --date 2026-08-20
+```
+Exit 0 = healthy (or not a trading day), 1 = missed/late/halted, 2 = couldn't reach Mongo.
+
+**By hand:** if the newest line in `trading_audit.jsonl` isn't from today and the market
+was open, the task didn't fire — usually a sleeping PC. Cover anything overdue manually,
+or just run the script; overdue exits are retried, not abandoned.
 
 ---
 
@@ -161,7 +217,13 @@ MAX_DAILY_NOTIONAL=5000
 MAX_HTB_RATE=100            # annualized borrow % ceiling
 MAX_SPREAD_PCT=0.05         # skip wider names
 ACCOUNT_SIZE=10000          # dry-run only; live reads real equity
+ENTRY_WINDOW_BEFORE_MIN=15  # minutes before the 9:30 open the run may still trade
+ENTRY_WINDOW_AFTER_MIN=15   # minutes after; outside this, --live halts (exit 4)
 ```
+
+Widen the entry window only deliberately. It is the guard that stops a mistimed run
+from filling at a price the backtest never measured — loosening it to "whenever the
+laptop happened to wake" is how the problem it exists for looked normal for weeks.
 
 ---
 
