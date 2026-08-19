@@ -20,6 +20,7 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Optional
 
+from .. import borrow as brw
 from .. import margin as mgn
 from .quotes import Quote, marketable_limit_price, spread_too_wide
 
@@ -59,12 +60,19 @@ class RiskLimits:
     """Circuit breakers. Exceeding one stops the order, it does not shrink it."""
     max_new_shorts_per_day: int = 5
     max_daily_notional: float = 5_000.0
+    #: Refuse entries below this price. The sub-$1 bucket has no measured edge
+    #: (t=0.46 over 29 trades) and a ~5.9x margin multiple. None = no floor.
+    min_entry_price: Optional[float] = None
     #: Total short maintenance margin the account may carry (None = unchecked).
     #: Binds far harder than notional exposure on sub-$5 names - see margin.py.
     margin_budget: Optional[float] = None
     #: Broker house requirement as a multiple of the FINRA 4210(c) floor.
     house_margin_multiple: float = 1.0
     max_htb_rate: float = 100.0        # annualized borrow % ceiling
+    #: Cap on EXPECTED borrow cost as a fraction of notional (rate x days/365).
+    #: The rate ceiling alone ignores holding period: 100%/yr costs 1.4% over 5
+    #: days and 41% over 150. None = only the rate ceiling applies.
+    max_borrow_cost_pct: Optional[float] = None
     max_spread_pct: float = 0.05
     limit_buffer_pct: float = 0.02
 
@@ -154,6 +162,13 @@ class OrderManager:
                 return (f"${signal.notional or 0:,.2f} notional buys 0 shares at "
                         f"${price:,.4f}; raise MAX_TRADE_NOTIONAL/TRADE_PCT to trade it")
             return "no share quantity (missing or invalid price)"
+        price = getattr(signal, "current_price", None)
+        if self.limits.min_entry_price and price and price < self.limits.min_entry_price:
+            # No measured edge below $1: 29 of 560 pooled OOS trades, mean +5.88%,
+            # t=0.46, 95% CI [-20.6%, +32.3%]. Not evidence of losses - evidence of
+            # nothing. These names also cost ~5.9x their notional in margin.
+            return (f"entry price ${price:,.4f} below the "
+                    f"${self.limits.min_entry_price:,.2f} floor (no measured edge)")
         if signal.gap_up_ok is False:
             return f"gap-up filter ({signal.gap_up_pct:.1f}%)"
         if signal.capital_ok is False:
@@ -163,9 +178,18 @@ class OrderManager:
         if signal.schwab_is_shortable is None and not signal.likely_shortable:
             return "no Schwab confirmation and proxy says unshortable"
         htb = signal.schwab_htb_rate
-        if htb is not None and abs(float(htb)) > self.limits.max_htb_rate:
-            return (f"borrow cost {abs(float(htb)):.0f}% exceeds "
-                    f"{self.limits.max_htb_rate:.0f}% ceiling")
+        if htb is not None:
+            if abs(float(htb)) > self.limits.max_htb_rate:
+                return (f"borrow cost {abs(float(htb)):.0f}% exceeds "
+                        f"{self.limits.max_htb_rate:.0f}% ceiling")
+            if self.limits.max_borrow_cost_pct:
+                # What it actually costs to hold this to its exit date. The rate
+                # ceiling alone treats a 5-day hold and a 150-day hold as equal.
+                days = brw.holding_days(signal.entry_date, signal.effective_date)
+                cost = brw.expected_cost_pct(htb, days)
+                if cost is not None and cost > self.limits.max_borrow_cost_pct:
+                    return (f"borrow {brw.describe(htb, days)}, over the "
+                            f"{100 * self.limits.max_borrow_cost_pct:.0f}% cap")
         if quote is None:
             return "no live quote available"
         if spread_too_wide(quote, self.limits.max_spread_pct):

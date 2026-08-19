@@ -22,6 +22,7 @@ import pandas as pd
 
 from ..broker import accounts as acct
 from ..broker.quotes import Quote, get_quotes
+from .. import borrow as brw
 from ..broker.schwab_orders import OrderManager, OrderMode, Outcome
 from ..signals import portfolio_state as ps
 from . import calendar as mcal
@@ -267,6 +268,7 @@ def process_entries(
                 positions, signal.ticker, signal.entry_date, signal.effective_date,
                 notional=signal.notional or 0.0, shares=signal.shares,
                 client_order_id=client_order_id,
+                entry_htb_rate=signal.schwab_htb_rate,
             )
             if not _flush_ledger(persist, report, signal.ticker):
                 ps.mark_entry_rejected(pos, positions, reason="ledger_write_failed")
@@ -339,3 +341,50 @@ def collect_quote_tickers(signals, positions) -> list[str]:
     tickers = {s.ticker.upper() for s in signals if s.status == "ENTER_NOW" and s.ticker}
     tickers |= {(p.get("ticker") or "").upper() for p in ps.live_positions(positions)}
     return sorted(t for t in tickers if t)
+
+
+def check_borrow_drift(positions: list[dict], client, report: SessionReport,
+                       alert_rate: float = 100.0, alert_multiple: float = 3.0) -> list[dict]:
+    """Re-price borrow on open shorts and flag any that have become expensive.
+
+    The entry veto is evaluated once and never again, so a name that cost 8%/yr
+    when we shorted it can be at 200% three weeks later with nothing noticing.
+    That spike is the squeeze signature, and it shows up exactly when the position
+    is already moving against us - so this is the difference between watching and
+    hoping.
+
+    Returns the list of positions that tripped, and records a note per name.
+    Best-effort: no borrow data means no alert, never a false all-clear.
+    """
+    live = ps.live_positions(positions)
+    if not live or client is None:
+        return []
+    tickers = sorted({(p.get("ticker") or "").upper() for p in live if p.get("ticker")})
+    if not tickers:
+        return []
+    try:
+        from ..broker.schwab_market_data import get_shortability_batch
+        current = get_shortability_batch(client, tickers)
+    except Exception as e:
+        report.notes.append(f"could not re-check borrow rates: {str(e)[:80]}")
+        return []
+
+    tripped = []
+    for pos in live:
+        ticker = (pos.get("ticker") or "").upper()
+        info = current.get(ticker) or {}
+        now_rate = info.get("htb_rate")
+        if now_rate is None:
+            continue
+        pos["current_htb_rate"] = now_rate
+        if brw.has_spiked(pos.get("entry_htb_rate"), now_rate,
+                          absolute_ceiling=alert_rate, multiple=alert_multiple):
+            was = pos.get("entry_htb_rate")
+            was_txt = f"{abs(float(was)):.0f}%" if was is not None else "unknown"
+            days = brw.holding_days(pos.get("entry_date"), pos.get("planned_exit_date"))
+            report.notes.append(
+                f"{ticker}: BORROW SPIKE {was_txt} -> {abs(float(now_rate)):.0f}%/yr "
+                f"({brw.describe(now_rate, days)})"
+            )
+            tripped.append(pos)
+    return tripped

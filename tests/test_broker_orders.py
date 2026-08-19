@@ -333,3 +333,79 @@ class TestMarginVeto:
     def test_the_reason_explains_the_ratio_not_just_the_refusal(self):
         reason = self._mgr(budget=10.0).entry_block_reason(sig(shares=100), TIGHT)
         assert "x)" in reason and "left" in reason
+
+
+class TestMinEntryPrice:
+    """Below $1 the strategy has no MEASURED edge - which is not the same as a
+    measured loss. 29 of 560 pooled OOS trades, mean +5.88%, t=0.46, 95% CI
+    [-20.6%, +32.3%]. Trading it is a bet on an unmeasured effect, and those
+    names also cost ~5.9x their notional in margin versus 0.4x above $1.
+    """
+
+    def _mgr(self, floor):
+        return OrderManager(mode=OrderMode.DRY_RUN,
+                            limits=RiskLimits(min_entry_price=floor))
+
+    def test_sub_dollar_entry_is_refused(self):
+        reason = self._mgr(1.00).entry_block_reason(sig(current_price=0.34), TIGHT)
+        assert reason is not None
+        assert "below the $1.00 floor" in reason
+
+    def test_a_dollar_exactly_is_allowed(self):
+        assert self._mgr(1.00).entry_block_reason(sig(current_price=1.00), TIGHT) is None
+
+    def test_above_the_floor_passes(self):
+        assert self._mgr(1.00).entry_block_reason(sig(current_price=12.50), TIGHT) is None
+
+    def test_no_floor_configured_allows_anything(self):
+        assert self._mgr(None).entry_block_reason(sig(current_price=0.02), TIGHT) is None
+
+    def test_the_floor_is_configurable(self):
+        assert self._mgr(5.00).entry_block_reason(sig(current_price=2.75), TIGHT) is not None
+        assert self._mgr(1.00).entry_block_reason(sig(current_price=2.75), TIGHT) is None
+
+    def test_the_reason_names_the_price_and_the_floor(self):
+        reason = self._mgr(1.00).entry_block_reason(sig(current_price=0.0224), TIGHT)
+        assert "0.0224" in reason and "1.00" in reason
+
+
+class TestBorrowCostVeto:
+    """The rate ceiling ignores holding period; expected COST does not."""
+
+    def _mgr(self, cap):
+        return OrderManager(mode=OrderMode.DRY_RUN,
+                            limits=RiskLimits(max_borrow_cost_pct=cap, max_htb_rate=200))
+
+    def _sig(self, rate, exit_date):
+        return sig(schwab_htb_rate=rate, entry_date="2026-08-20",
+                   effective_date=exit_date)
+
+    def test_a_short_hold_at_a_high_rate_is_allowed(self):
+        """80%/yr over 5 days is 1.1% of notional - not worth refusing."""
+        assert self._mgr(0.05).entry_block_reason(
+            self._sig(-80.0, "2026-08-25"), TIGHT) is None
+
+    def test_the_same_rate_over_a_long_hold_is_refused(self):
+        """80%/yr over 150 days is 33% - more than the mean trade return."""
+        reason = self._mgr(0.05).entry_block_reason(
+            self._sig(-80.0, "2027-01-17"), TIGHT)
+        assert reason is not None and reason.startswith("borrow")
+        assert "%/yr over" in reason
+
+    def test_no_cap_configured_leaves_the_old_behaviour(self):
+        assert self._mgr(None).entry_block_reason(
+            self._sig(-80.0, "2027-01-17"), TIGHT) is None
+
+    def test_the_rate_ceiling_still_applies_independently(self):
+        mgr = OrderManager(mode=OrderMode.DRY_RUN,
+                           limits=RiskLimits(max_htb_rate=50, max_borrow_cost_pct=0.99))
+        assert "ceiling" in mgr.entry_block_reason(self._sig(-80.0, "2026-08-25"), TIGHT)
+
+    def test_an_unusable_exit_date_does_not_block_on_cost(self):
+        """Cannot price the hold, so fall back to the rate ceiling alone."""
+        assert self._mgr(0.05).entry_block_reason(
+            self._sig(-10.0, "Unknown"), TIGHT) is None
+
+    def test_a_free_borrow_is_never_blocked(self):
+        assert self._mgr(0.05).entry_block_reason(
+            self._sig(0.0, "2027-01-17"), TIGHT) is None

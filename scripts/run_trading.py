@@ -322,9 +322,11 @@ def _session(ctx: dict) -> int:
         max_new_shorts_per_day=config.MAX_NEW_SHORTS_PER_DAY,
         max_daily_notional=config.MAX_DAILY_NOTIONAL,
         max_htb_rate=config.MAX_HTB_RATE,
+        max_borrow_cost_pct=config.MAX_BORROW_COST_PCT,
         max_spread_pct=config.MAX_SPREAD_PCT,
         margin_budget=margin_budget,
         house_margin_multiple=config.HOUSE_MARGIN_MULTIPLE,
+        min_entry_price=config.MIN_ENTRY_PRICE,
     )
     manager = OrderManager(mode=mode, client=client, account_hash=account_hash,
                            limits=limits, margin_committed=margin_committed)
@@ -334,6 +336,16 @@ def _session(ctx: dict) -> int:
     # so a crash mid-run cannot leave a real position unrecorded.
     def persist() -> None:
         ps.save_positions(path, positions)
+
+    # Re-price borrow on what we already hold before doing anything else: a
+    # mid-hold spike is the squeeze signature and the entry veto cannot see it.
+    spiked = sess.check_borrow_drift(positions, client, report,
+                                     alert_rate=config.BORROW_ALERT_RATE,
+                                     alert_multiple=config.BORROW_ALERT_MULTIPLE)
+    if spiked and not args.no_alert:
+        names = ", ".join((p.get("ticker") or "?") for p in spiked)
+        send_text("SplitShort: BORROW SPIKE",
+                  f"Borrow cost jumped on {names}. Consider covering early."[:140])
 
     sess.process_exits(positions, manager, quotes, report, persist=persist)
     sess.attach_take_profits(positions, manager, report, TAKE_PROFIT_PCT)

@@ -103,6 +103,17 @@ MAX_HTB_RATE = float(os.environ.get("MAX_HTB_RATE", "100"))
 # Skip names whose bid-ask spread exceeds this fraction of the mid. On a $0.09 stock a
 # one-cent spread is ~11% - crossing it twice costs far more than the strategy's edge.
 MAX_SPREAD_PCT = float(os.environ.get("MAX_SPREAD_PCT", "0.05"))
+# Cap on EXPECTED borrow cost as a fraction of notional (rate x holding days/365).
+# MAX_HTB_RATE alone caps the annualized rate and ignores how long the position is
+# held, so a 100%/yr name costs 1.4% over 5 days and 41% over 150 - and both used
+# to pass identically. 5% is ~28% of the mean trade return, permissive enough that
+# it almost never binds on the typical 11-day hold but catches the long-hold tail.
+MAX_BORROW_COST_PCT = float(os.environ.get("MAX_BORROW_COST_PCT", "0.05"))
+# Alert when an open position's borrow rate reaches this, or this multiple of what
+# it cost at entry. A mid-hold spike is the squeeze signature, and it arrives while
+# the position is already moving against us.
+BORROW_ALERT_RATE = float(os.environ.get("BORROW_ALERT_RATE", "100"))
+BORROW_ALERT_MULTIPLE = float(os.environ.get("BORROW_ALERT_MULTIPLE", "3.0"))
 
 # Absolute ceiling on a SINGLE position's notional, in dollars. Unset/0 = no cap.
 # TRADE_PCT alone is a *proportional* cap, so the dollar size it produces drifts
@@ -110,6 +121,15 @@ MAX_SPREAD_PCT = float(os.environ.get("MAX_SPREAD_PCT", "0.05"))
 # deliberately trading tiny to validate the live path. This makes "$50 a trade" mean
 # $50 regardless of equity, and unlike a CLI flag it cannot be forgotten on one run.
 MAX_TRADE_NOTIONAL = float(os.environ.get("MAX_TRADE_NOTIONAL", "0")) or None
+
+# Minimum entry price. Below $1 the strategy has no MEASURED edge: across 560
+# pooled out-of-sample trades the sub-$1 bucket held just 29 of them, mean
+# +5.88% with a t-stat of 0.46 and a 95% CI of [-20.6%, +32.3%] - indistinguishable
+# from zero. That is a sample-size problem rather than evidence of losses, but
+# trading it is a bet on an unmeasured effect, and those names also carry a ~5.9x
+# margin multiple (FINRA's $2.50/share floor) versus 0.4x above $1.
+# Excluding them keeps 95% of backtested trades and RAISES the t-stat 14.43 -> 17.05.
+MIN_ENTRY_PRICE = float(os.environ.get("MIN_ENTRY_PRICE", "1.00"))
 
 # --- Margin (FINRA 4210(c)) ---
 # Fraction of account equity allowed to be tied up in short maintenance margin.

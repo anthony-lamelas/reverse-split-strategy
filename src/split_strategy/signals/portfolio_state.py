@@ -75,6 +75,7 @@ def _migrate(p: dict) -> dict:
     p.setdefault("exit_order_id", None)
     p.setdefault("exit_fill_price", None)
     p.setdefault("client_order_id", None)
+    p.setdefault("entry_htb_rate", None)
     p.setdefault("closed_at", None)
     return p
 
@@ -163,6 +164,7 @@ def add_position(
     entry_order_id: Optional[str] = None,
     client_order_id: Optional[str] = None,
     status: str = PENDING_ENTRY,
+    entry_htb_rate: Optional[float] = None,
 ) -> dict:
     """Record a newly submitted entry. Returns the created record."""
     record = dict(
@@ -173,6 +175,7 @@ def add_position(
         shares=shares,
         status=status,
         entry_order_id=entry_order_id,
+        entry_htb_rate=entry_htb_rate,
         client_order_id=client_order_id or new_client_order_id(ticker),
         entry_fill_price=None,
         filled_shares=None,
