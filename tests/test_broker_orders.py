@@ -276,3 +276,60 @@ class TestTakeProfit:
         mgr = OrderManager(mode=OrderMode.DRY_RUN)
         result = mgr.submit_take_profit("ABC", 100, entry_fill=0.90, take_profit_pct=0.20)
         assert result.limit_price == pytest.approx(0.72)
+
+
+class TestMarginVeto:
+    """Margin, not capital, is what caps concurrency on sub-$5 names.
+
+    FINRA 4210(c) floors a short's requirement at $2.50/share below $5, so a
+    cheap stock consumes margin far out of proportion to its notional. Without
+    this veto the system sizes on notional and finds out from a broker rejection
+    - or worse, from a margin call on the position after it.
+    """
+
+    def _mgr(self, budget, committed=0.0, house=1.0):
+        return OrderManager(
+            mode=OrderMode.DRY_RUN,
+            limits=RiskLimits(margin_budget=budget, house_margin_multiple=house,
+                              max_new_shorts_per_day=99, max_daily_notional=1e9),
+            margin_committed=committed,
+        )
+
+    def test_no_budget_configured_means_no_margin_check(self):
+        """Backwards compatible: margin_budget=None leaves behaviour unchanged."""
+        mgr = self._mgr(budget=None)
+        assert mgr.entry_block_reason(sig(shares=100), TIGHT) is None
+
+    def test_a_cheap_short_is_blocked_when_it_exceeds_the_budget(self):
+        # 100 shares at $1.00 -> $2.50 floor -> $250 required.
+        mgr = self._mgr(budget=100.0)
+        reason = mgr.entry_block_reason(sig(shares=100), TIGHT)
+        assert reason is not None and reason.startswith("margin:")
+        assert "$250 margin" in reason
+
+    def test_the_same_short_passes_with_enough_budget(self):
+        assert self._mgr(budget=1000.0).entry_block_reason(sig(shares=100), TIGHT) is None
+
+    def test_already_committed_margin_counts_against_the_budget(self):
+        """Open positions consume the budget before today's signals see it."""
+        assert self._mgr(budget=1000.0, committed=900.0)\
+            .entry_block_reason(sig(shares=100), TIGHT) is not None
+
+    def test_house_multiple_tightens_the_veto(self):
+        assert self._mgr(budget=300.0).entry_block_reason(sig(shares=100), TIGHT) is None
+        assert self._mgr(budget=300.0, house=1.5)\
+            .entry_block_reason(sig(shares=100), TIGHT) is not None
+
+    def test_submitting_consumes_the_budget_for_the_next_signal(self):
+        """Two identical shorts, budget for one - the second must be refused."""
+        mgr = self._mgr(budget=300.0)
+        first = mgr.submit_entry(sig(ticker="ABC", shares=100), TIGHT)
+        assert first.outcome == Outcome.WOULD_PLACE.value
+        assert mgr.margin_committed == pytest.approx(250.0)
+
+        second = mgr.entry_block_reason(sig(ticker="XYZ", shares=100), TIGHT)
+        assert second is not None and second.startswith("margin:")
+
+    def test_the_reason_explains_the_ratio_not_just_the_refusal(self):
+        reason = self._mgr(budget=10.0).entry_block_reason(sig(shares=100), TIGHT)
+        assert "x)" in reason and "left" in reason

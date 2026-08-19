@@ -20,6 +20,7 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Optional
 
+from .. import margin as mgn
 from .quotes import Quote, marketable_limit_price, spread_too_wide
 
 
@@ -58,6 +59,11 @@ class RiskLimits:
     """Circuit breakers. Exceeding one stops the order, it does not shrink it."""
     max_new_shorts_per_day: int = 5
     max_daily_notional: float = 5_000.0
+    #: Total short maintenance margin the account may carry (None = unchecked).
+    #: Binds far harder than notional exposure on sub-$5 names - see margin.py.
+    margin_budget: Optional[float] = None
+    #: Broker house requirement as a multiple of the FINRA 4210(c) floor.
+    house_margin_multiple: float = 1.0
     max_htb_rate: float = 100.0        # annualized borrow % ceiling
     max_spread_pct: float = 0.05
     limit_buffer_pct: float = 0.02
@@ -116,6 +122,7 @@ class OrderManager:
         client=None,
         account_hash: Optional[str] = None,
         limits: Optional[RiskLimits] = None,
+        margin_committed: float = 0.0,
     ):
         self.mode = OrderMode(mode)
         self.client = client
@@ -124,6 +131,9 @@ class OrderManager:
         self.results: list[OrderResult] = []
         self.new_shorts_today = 0
         self.notional_today = 0.0
+        #: Maintenance margin already tied up by open shorts, plus anything this
+        #: session commits. Seeded from the ledger by the caller.
+        self.margin_committed = float(margin_committed or 0.0)
 
     # -- gating ---------------------------------------------------------------
 
@@ -162,6 +172,21 @@ class OrderManager:
             spread = quote.spread_pct
             shown = "unquotable" if spread is None else f"{spread * 100:.1f}%"
             return f"spread {shown} exceeds {self.limits.max_spread_pct * 100:.0f}% limit"
+        if self.limits.margin_budget is not None:
+            # FINRA 4210(c) floors the requirement at $2.50/share below $5, so a
+            # cheap stock consumes margin far out of proportion to its notional -
+            # 7x at $0.34, 111x at $0.02. Without this the system would size a
+            # position the account cannot carry and learn about it from a broker
+            # rejection, or worse, from a margin call on the position after it.
+            price = (quote.last or quote.ask or signal.current_price
+                     if quote else signal.current_price)
+            need = mgn.short_maintenance_requirement(
+                price, signal.shares, self.limits.house_margin_multiple)
+            if self.margin_committed + need > self.limits.margin_budget:
+                room = self.limits.margin_budget - self.margin_committed
+                return (f"margin: needs "
+                        f"{mgn.describe(price, signal.shares, self.limits.house_margin_multiple)}"
+                        f", only ${room:,.0f} of ${self.limits.margin_budget:,.0f} left")
         if self.new_shorts_today >= self.limits.max_new_shorts_per_day:
             return f"daily new-short limit reached ({self.limits.max_new_shorts_per_day})"
         projected = self.notional_today + (signal.notional or 0.0)
@@ -191,6 +216,7 @@ class OrderManager:
                       f"(bid {quote.bid}, spread {quote.spread_pct * 100:.1f}%)")
             self.new_shorts_today += 1
             self.notional_today += signal.notional or 0.0
+            self._commit_margin(signal, quote)
             return self._record(signal.ticker, "SELL_SHORT", shares, Outcome.WOULD_PLACE,
                                 detail, limit_price=limit, client_order_id=client_order_id)
 
@@ -199,7 +225,18 @@ class OrderManager:
         if result.outcome in (Outcome.SUBMITTED.value, Outcome.UNCERTAIN.value):
             self.new_shorts_today += 1
             self.notional_today += signal.notional or 0.0
+            self._commit_margin(signal, quote)
         return result
+
+    def _commit_margin(self, signal, quote) -> None:
+        """Book this short's maintenance requirement against the margin budget.
+
+        Counted for UNCERTAIN submits too: if the order may have reached the
+        broker, the margin may already be committed, and under-counting would let
+        the next signal through on margin that is not actually free."""
+        price = (quote.last or quote.ask if quote else None) or signal.current_price
+        self.margin_committed += mgn.short_maintenance_requirement(
+            price, signal.shares, self.limits.house_margin_multiple)
 
     # -- exits ----------------------------------------------------------------
 

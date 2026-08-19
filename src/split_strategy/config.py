@@ -111,6 +111,19 @@ MAX_SPREAD_PCT = float(os.environ.get("MAX_SPREAD_PCT", "0.05"))
 # $50 regardless of equity, and unlike a CLI flag it cannot be forgotten on one run.
 MAX_TRADE_NOTIONAL = float(os.environ.get("MAX_TRADE_NOTIONAL", "0")) or None
 
+# --- Margin (FINRA 4210(c)) ---
+# Fraction of account equity allowed to be tied up in short maintenance margin.
+# NOT 1.0 by default: a book requiring 100% of equity sits exactly at the margin
+# call line with no buffer, so any adverse move forces a liquidation. 0.5 leaves
+# room to be wrong. See src/split_strategy/margin.py for why this binds harder
+# than MAX_EXPOSURE - the $2.50/share floor means a $50 short of a $0.34 stock
+# needs ~$368 of margin, and ~71% of this strategy's signals price under $1.
+MARGIN_EQUITY_PCT = float(os.environ.get("MARGIN_EQUITY_PCT", "0.5"))
+# Broker house requirement as a multiple of the FINRA floor. Schwab reserves the
+# right to raise requirements on low-priced, thinly traded or volatile securities;
+# set this above 1.0 once they confirm what they actually charge.
+HOUSE_MARGIN_MULTIPLE = float(os.environ.get("HOUSE_MARGIN_MULTIPLE", "1.0"))
+
 # --- Entry timing window ---
 # Strategy B enters at the OPEN. A run that fires hours late is not the trade that was
 # backtested, so live sessions outside this window halt rather than trade. Scheduled

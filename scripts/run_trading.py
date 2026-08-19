@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT / "src"))
 
 from split_strategy import config
+from split_strategy import margin as mgn
 from split_strategy.broker.quotes import get_quotes
 from split_strategy.broker.schwab_orders import OrderManager, OrderMode, RiskLimits
 from split_strategy.live import calendar as mcal
@@ -306,13 +307,27 @@ def _session(ctx: dict) -> int:
         write_audit(report)
         return 5
 
+    # Margin, not capital, is the binding constraint on this strategy: FINRA
+    # 4210(c) floors a short's requirement at $2.50/share below $5, so a cheap
+    # name eats margin far out of proportion to its notional. Seed the manager
+    # with what open positions already tie up, marked at current quotes.
+    margin_budget = equity * config.MARGIN_EQUITY_PCT
+    margin_committed = mgn.portfolio_margin_requirement(
+        ps.live_positions(positions), quotes, config.HOUSE_MARGIN_MULTIPLE)
+    print(f"Margin ${margin_committed:,.0f} of ${margin_budget:,.0f} committed "
+          f"({config.MARGIN_EQUITY_PCT:.0%} of equity, "
+          f"{config.HOUSE_MARGIN_MULTIPLE:.1f}x FINRA floor)")
+
     limits = RiskLimits(
         max_new_shorts_per_day=config.MAX_NEW_SHORTS_PER_DAY,
         max_daily_notional=config.MAX_DAILY_NOTIONAL,
         max_htb_rate=config.MAX_HTB_RATE,
         max_spread_pct=config.MAX_SPREAD_PCT,
+        margin_budget=margin_budget,
+        house_margin_multiple=config.HOUSE_MARGIN_MULTIPLE,
     )
-    manager = OrderManager(mode=mode, client=client, account_hash=account_hash, limits=limits)
+    manager = OrderManager(mode=mode, client=client, account_hash=account_hash,
+                           limits=limits, margin_committed=margin_committed)
 
     # --- exits before entries -------------------------------------------------------
     # `persist` lets the session flush the ledger before an order can reach the broker,
