@@ -24,6 +24,56 @@ from split_strategy.backtest.prices import fetch_prices
 from split_strategy.backtest.events import build_events_from_early_edgar
 
 
+COVERAGE_LOG = "DATA/survivorship_coverage.csv"
+
+
+def log_coverage(tickers, missing, start, end, events, got: int) -> None:
+    """Record how much of the event universe had no price data, and for whom.
+
+    yfinance drops delisted tickers, so those events leave the sample silently. That
+    matters here more than usual: reverse splits are largely a compliance manoeuvre by
+    failing microcaps, so the names that vanish are disproportionately the ones that
+    collapsed - plausibly this short strategy's biggest winners, which would mean the
+    backtest UNDERSTATES the edge. Plausibly, but not measurably: squeeze-prone
+    microcaps could cut the other way, and many of the missing were never shortable
+    at all.
+
+    This does not correct the bias - that needs a point-in-time source such as Polygon
+    or CRSP. It measures the size of the hole so nobody has to guess, and appends
+    rather than overwrites so coverage can be tracked as the dataset grows.
+    """
+    missing_set = {str(t).upper() for t in missing}
+    events_total = events_dropped = ""
+    if events is not None and not events.empty:
+        events_total = len(events)
+        events_dropped = int(events["ticker"].str.upper().isin(missing_set).sum())
+
+    row = {
+        "logged_at": pd.Timestamp.now().isoformat(),
+        "window_start": pd.Timestamp(start).strftime("%Y-%m-%d"),
+        "window_end": pd.Timestamp(end).strftime("%Y-%m-%d"),
+        "tickers_requested": len(tickers),
+        "tickers_with_data": got,
+        "tickers_missing": len(missing_set),
+        "events_total": events_total,
+        "events_dropped": events_dropped,
+        "missing_tickers": ";".join(sorted(missing_set)),
+    }
+
+    path = ROOT / COVERAGE_LOG
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([row]).to_csv(path, mode="a", header=not path.exists(), index=False)
+
+    if events_dropped != "":
+        pct = 100.0 * events_dropped / events_total if events_total else 0.0
+        print(f"[survivorship] {events_dropped}/{events_total} events ({pct:.1f}%) have "
+              f"no price data and are silently excluded from any backtest built on "
+              f"this panel. Logged to {COVERAGE_LOG}.")
+    else:
+        print(f"[survivorship] {len(missing_set)}/{len(tickers)} tickers missing; "
+              f"logged to {COVERAGE_LOG}.")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--from-events", action="store_true", help="derive tickers/date-range from recent early_edgar events")
@@ -34,6 +84,7 @@ def main():
     ap.add_argument("--out", default="DATA/prices_recent.pkl", help="output pickle path")
     args = ap.parse_args()
 
+    events = None
     if args.tickers:
         tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
         if not (args.start and args.end):
@@ -54,6 +105,7 @@ def main():
     panel, missing = fetch_prices(tickers, start, end)
     if panel.empty:
         print("No price data returned.")
+        log_coverage(tickers, missing, start, end, events, got=0)
         return
     out = ROOT / args.out
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -62,6 +114,7 @@ def main():
     print(f"Wrote {out}  ({got} tickers with data, {len(missing)} missing)")
     if missing:
         print("Missing:", ", ".join(missing[:40]) + (" ..." if len(missing) > 40 else ""))
+    log_coverage(tickers, missing, start, end, events, got=got)
 
 
 if __name__ == "__main__":
