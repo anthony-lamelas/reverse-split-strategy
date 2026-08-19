@@ -91,6 +91,20 @@ def reconcile_and_sync(
             f"scheduled to cover: " + ", ".join(p.get("ticker", "?") for p in malformed)
         )
         return False
+
+    # A cover was written ahead but never got an order id back, so we cannot tell
+    # whether it reached the broker. Guessing either way is bad - covering again flips
+    # us long - so stop and let a human look.
+    ambiguous = [p for p in ps.live_positions(positions)
+                 if p.get("status") == ps.PENDING_EXIT and not p.get("exit_order_id")]
+    if ambiguous:
+        report.halted = True
+        report.halt_reason = (
+            "cover may have been submitted without being recorded for "
+            + ", ".join(p.get("ticker", "?") for p in ambiguous)
+            + "; check the broker before re-running (covering twice would go long)"
+        )
+        return False
     return True
 
 
@@ -138,12 +152,35 @@ def _settle_pending(positions, client, account_hash, report: SessionReport) -> N
                 report.notes.append(f"{pos['ticker']}: cover {info['status'].lower()}, will retry")
 
 
+def _flush_ledger(persist, report: SessionReport, ticker: str) -> bool:
+    """Force the ledger to disk before an order can reach the broker.
+
+    The ledger is normally saved once, at the end of a run. That is fine when the run
+    completes, but it means a crash between "order sent" and "order recorded" leaves a
+    real position with no ledger row - and the next run, which now repeats every few
+    minutes across the entry window, would open a second one. Returns False if the
+    write failed, in which case the caller must NOT submit.
+    """
+    if persist is None:
+        return True
+    try:
+        persist()
+        return True
+    except Exception as e:
+        report.notes.append(
+            f"{ticker}: could not persist ledger before submitting ({str(e)[:80]}); "
+            f"skipping to avoid an unrecorded order"
+        )
+        return False
+
+
 def process_exits(
     positions: list[dict],
     manager: OrderManager,
     quotes: dict[str, Quote],
     report: SessionReport,
     as_of: Optional[pd.Timestamp] = None,
+    persist=None,
 ) -> None:
     """Cover every OPEN position whose exit date has arrived."""
     as_of = mcal.today_et() if as_of is None else as_of
@@ -167,6 +204,17 @@ def process_exits(
                 continue
             ps.attach_take_profit(pos, None)
 
+        # Write-ahead the cover intent. A crash between sending the cover and recording
+        # it used to leave the position OPEN, so the next run would cover a second time
+        # and flip us long - survivable when runs were a day apart, not when they repeat
+        # every few minutes across the entry window. PENDING_EXIT with no exit_order_id
+        # is the "did I cover?" state, and reconcile_and_sync halts on it.
+        previous_status = pos.get("status")
+        pos["status"] = ps.PENDING_EXIT
+        if not _flush_ledger(persist, report, ticker):
+            pos["status"] = previous_status
+            continue
+
         result = manager.submit_cover(ticker, shares, quotes.get(ticker.upper()))
         report.exits.append(result.to_dict())
         if result.outcome == Outcome.SUBMITTED.value:
@@ -177,6 +225,10 @@ def process_exits(
             # May have reached the broker; mark pending so reconciliation resolves it.
             ps.mark_exit_submitted(pos, result.order_id)
             report.notes.append(f"{ticker}: cover uncertain, will reconcile next run")
+        else:
+            # Broker refused or we chose not to send: nothing is working, so put the
+            # position back to where it was and let a later run retry it.
+            pos["status"] = previous_status
 
 
 def process_entries(
@@ -186,6 +238,7 @@ def process_entries(
     quotes: dict[str, Quote],
     report: SessionReport,
     take_profit_pct: float,
+    persist=None,
 ) -> None:
     """Open new shorts for ENTER_NOW signals, one position per ticker."""
     for signal in signals:
@@ -202,18 +255,42 @@ def process_entries(
 
         quote = quotes.get(signal.ticker.upper())
         client_order_id = ps.new_client_order_id(signal.ticker)
+
+        # Write-ahead the entry intent for anything that will actually be submitted,
+        # and flush it to disk before the order can reach the broker. Checking the
+        # block reason first keeps the ledger free of records for the many entries
+        # that get vetoed on spread, shortability or caps - `entry_block_reason` is a
+        # pure read, so asking twice costs nothing.
+        pos = None
+        if manager.entry_block_reason(signal, quote) is None:
+            pos = ps.add_position(
+                positions, signal.ticker, signal.entry_date, signal.effective_date,
+                notional=signal.notional or 0.0, shares=signal.shares,
+                client_order_id=client_order_id,
+            )
+            if not _flush_ledger(persist, report, signal.ticker):
+                ps.mark_entry_rejected(pos, positions, reason="ledger_write_failed")
+                continue
+
         result = manager.submit_entry(signal, quote, client_order_id=client_order_id)
         report.entries.append(result.to_dict())
 
         if result.outcome not in (Outcome.SUBMITTED.value, Outcome.WOULD_PLACE.value,
                                   Outcome.UNCERTAIN.value):
+            if pos is not None:
+                ps.mark_entry_rejected(pos, positions,
+                                       reason=f"entry {result.outcome.lower()}")
             continue
 
-        pos = ps.add_position(
-            positions, signal.ticker, signal.entry_date, signal.effective_date,
-            notional=signal.notional or 0.0, shares=signal.shares,
-            entry_order_id=result.order_id, client_order_id=client_order_id,
-        )
+        if pos is None:
+            # entry_block_reason said no but the submit went through anyway. Should be
+            # unreachable, but never let a live order go unrecorded.
+            pos = ps.add_position(
+                positions, signal.ticker, signal.entry_date, signal.effective_date,
+                notional=signal.notional or 0.0, shares=signal.shares,
+                client_order_id=client_order_id,
+            )
+        pos["entry_order_id"] = result.order_id
 
         if manager.mode is OrderMode.DRY_RUN:
             # Simulate the fill so the take-profit leg is exercised in paper runs too.

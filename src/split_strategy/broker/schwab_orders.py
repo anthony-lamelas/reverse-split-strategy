@@ -135,6 +135,14 @@ class OrderManager:
         if signal.status != "ENTER_NOW":
             return f"status is {signal.status}; only ENTER_NOW opens a position"
         if not signal.shares or signal.shares <= 0:
+            # Two very different causes used to share one message. "No price" is a data
+            # problem; "notional too small" is a sizing choice that silently truncates
+            # the tradeable universe to cheap names - at a $10 notional every stock
+            # over $10 lands here and looks identical to missing data in the log.
+            price = getattr(signal, "current_price", None)
+            if price and price > 0:
+                return (f"${signal.notional or 0:,.2f} notional buys 0 shares at "
+                        f"${price:,.4f}; raise MAX_TRADE_NOTIONAL/TRADE_PCT to trade it")
             return "no share quantity (missing or invalid price)"
         if signal.gap_up_ok is False:
             return f"gap-up filter ({signal.gap_up_pct:.1f}%)"

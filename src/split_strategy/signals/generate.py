@@ -97,6 +97,7 @@ def generate_signals(
     price_check: bool = True,
     existing_committed: float = 0.0,
     max_exposure: Optional[float] = None,
+    max_trade_notional: Optional[float] = None,
 ) -> list[Signal]:
     """Build ranked short-candidate signals actionable around `as_of`.
 
@@ -117,6 +118,8 @@ def generate_signals(
     """
     account_size = config.DEFAULT_ACCOUNT_SIZE if account_size is None else account_size
     trade_pct = config.TRADE_PCT if trade_pct is None else trade_pct
+    max_trade_notional = (config.MAX_TRADE_NOTIONAL if max_trade_notional is None
+                          else max_trade_notional)
     stop_loss = config.STOP_LOSS_PCT if stop_loss is None else stop_loss
     max_gap_up = config.MAX_GAP_UP_PCT if max_gap_up is None else max_gap_up
     max_exposure = config.MAX_EXPOSURE if max_exposure is None else max_exposure
@@ -182,6 +185,11 @@ def generate_signals(
                     sig.notes.append(f"SKIP: gapped up {sig.gap_up_pct:.1f}% (> {max_gap_up*100:.0f}%)")
             if cur and cur > 0:
                 notional = account_size * trade_pct
+                if max_trade_notional:
+                    # Absolute dollar ceiling, applied after the proportional size so a
+                    # growing account cannot silently scale up a deliberately tiny
+                    # validation position.
+                    notional = min(notional, max_trade_notional)
                 sig.notional = round(notional, 2)
                 sig.shares = int(math.floor(notional / cur))
                 sig.stop_price = round(cur * (1 + stop_loss), 4)
@@ -277,6 +285,12 @@ def log_shortability_ground_truth(signals: list[Signal], log_path) -> int:
     a real ground-truth dataset over time to validate the historical proxy classifier
     in backtest/shortability.py. Returns the number of rows appended (0 if none had
     Schwab data checked).
+
+    At most ONE row per ticker per day. The scheduled task can fire more than once
+    across the entry window, and each repeat used to append another identical row -
+    inflating the very dataset this exists to build. An accuracy figure computed from
+    it would then be weighted by how often the scheduler happened to run rather than
+    by distinct observations, which is worse than having less data.
     """
     import csv
     from pathlib import Path
@@ -291,11 +305,29 @@ def log_shortability_ground_truth(signals: list[Signal], log_path) -> int:
     fieldnames = ["logged_at", "ticker", "confidence", "entry_price", "exchange",
                  "proxy_likely_shortable", "schwab_is_shortable", "schwab_is_hard_to_borrow",
                  "schwab_htb_rate"]
+
+    now_ts = pd.Timestamp.now()
+    today = now_ts.strftime("%Y-%m-%d")
+    if not is_new:
+        seen_today = set()
+        try:
+            with open(log_path, newline="", encoding="utf-8") as f:
+                for existing in csv.DictReader(f):
+                    if (existing.get("logged_at") or "")[:10] == today:
+                        seen_today.add((existing.get("ticker") or "").upper())
+        except OSError:
+            # Unreadable log: fall through and append. A duplicate row is a far
+            # smaller problem than dropping the observation entirely.
+            seen_today = set()
+        rows = [s for s in rows if (s.ticker or "").upper() not in seen_today]
+        if not rows:
+            return 0
+
     with open(log_path, "a", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         if is_new:
             w.writeheader()
-        now = pd.Timestamp.now().isoformat()
+        now = now_ts.isoformat()
         for s in rows:
             w.writerow(dict(
                 logged_at=now, ticker=s.ticker, confidence=s.confidence,

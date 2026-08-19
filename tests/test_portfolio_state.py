@@ -167,9 +167,21 @@ class TestLifecycleTransitions:
         assert pos["status"] == ps.CLOSED
         assert ps.committed_capital(positions) == 0.0
 
-    def test_client_order_ids_are_unique(self):
-        ids = {ps.new_client_order_id("ABC") for _ in range(50)}
-        assert len(ids) == 50
+    def test_client_order_id_is_stable_per_ticker_and_day(self):
+        """An idempotency key must repeat, or it cannot identify a repeated submit.
+
+        The scheduled task now fires every few minutes across the entry window, so two
+        runs on the same day submitting the same ticker have to produce the same key.
+        """
+        ids = {ps.new_client_order_id("ABC", as_of="2026-08-20") for _ in range(50)}
+        assert ids == {"rss-ABC-20260820"}
+
+    def test_client_order_id_differs_by_ticker_and_by_day(self):
+        same_day = pd.Timestamp("2026-08-20")
+        assert (ps.new_client_order_id("ABC", as_of=same_day)
+                != ps.new_client_order_id("XYZ", as_of=same_day))
+        assert (ps.new_client_order_id("ABC", as_of="2026-08-20")
+                != ps.new_client_order_id("ABC", as_of="2026-08-21"))
 
     def test_simulate_lifecycle_only_advances_dry_run(self):
         positions = [make_pos("A", status=ps.PENDING_ENTRY, exit_date="2026-09-01"),
@@ -252,3 +264,4 @@ class TestSummarizeOrder:
         out = summarize_order({"status": "WORKING", "filledQuantity": 40})
         assert out["is_filled"] is False
         assert out["filled_quantity"] == pytest.approx(40)
+

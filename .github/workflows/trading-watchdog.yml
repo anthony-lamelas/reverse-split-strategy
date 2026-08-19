@@ -1,0 +1,60 @@
+name: Trading Watchdog
+
+# Confirms the trading host actually ran near the open today.
+#
+# This exists because every other alert in the system is sent BY the trading run, so
+# the one thing it can never report is that it did not run at all. A laptop asleep at
+# 9:25 ET executes no code and sends no SMS - which is how the job silently drifted to
+# 12:15, 17:07 and 23:32 ET for weeks in August 2026 without anyone being told.
+#
+# Runs on GitHub's infrastructure, so it is independent of that machine by design.
+# A failure here emails the repo owner through GitHub's default notification on
+# workflow failure, so this needs no SMTP secrets.
+#
+# NOTE: this is not a revival of the alerting removed in 5ebab0a. That path re-sent
+# trade signals and genuinely duplicated run_trading.py. This one reports the ABSENCE
+# of a local run, which by definition the local run cannot report.
+
+on:
+  schedule:
+    # 15:00 UTC = 11:00 EDT / 10:00 EST. Deliberately a fixed UTC time: GitHub cron has
+    # no timezone support, and both DST offsets land comfortably after the 09:45 ET
+    # entry window closes, so the check never races the run it is checking.
+    - cron: "0 15 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "ET date to check (YYYY-MM-DD); blank = today"
+        required: false
+        default: ""
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        # Only what the watchdog needs: a Mongo driver, pandas for the ET calendar
+        # helpers, and dotenv because config.py imports it unconditionally.
+        run: |
+          python -m pip install --upgrade pip
+          pip install pymongo pandas python-dotenv
+
+      - name: Check for today's trading heartbeat
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          # config.py warns (RuntimeWarning) when this is unset. Harmless here - the
+          # watchdog never contacts the SEC - but set it to keep the log clean.
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: |
+          python scripts/check_heartbeat.py ${{ github.event.inputs.date && format('--date {0}', github.event.inputs.date) || '' }}

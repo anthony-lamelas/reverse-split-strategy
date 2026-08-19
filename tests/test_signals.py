@@ -12,6 +12,7 @@ from split_strategy.signals.generate import (
     Signal,
     _next_business_day,
     allocate_capital,
+    log_shortability_ground_truth,
     rank_signals,
 )
 
@@ -124,3 +125,74 @@ class TestAllocateCapital:
         signals = [sig("T1", notional=200.0)]
         allocate_capital(signals, account_size=10_000, max_exposure=0.0)
         assert not bool(signals[0].capital_ok)
+
+
+class TestGroundTruthDedupe:
+    """One row per ticker per day, however many times the session runs.
+
+    This CSV is the dataset used to calibrate the historical shortability proxy. The
+    scheduled task can fire repeatedly across the entry window, and every repeat used
+    to append another identical row - so any accuracy figure computed from it would be
+    weighted by how often the scheduler ran rather than by distinct observations.
+    """
+
+    def _sig(self, ticker="ABC", shortable=True):
+        s = sig(ticker=ticker)
+        s.schwab_is_shortable = shortable
+        s.schwab_is_hard_to_borrow = False
+        s.schwab_htb_rate = -8.0
+        s.likely_shortable = False
+        s.exchange = "Nasdaq"
+        return s
+
+    def _rows(self, path):
+        import csv
+        with open(path, newline="", encoding="utf-8") as f:
+            return list(csv.DictReader(f))
+
+    def test_repeat_runs_same_day_append_once(self, tmp_path):
+        path = tmp_path / "gt.csv"
+        assert log_shortability_ground_truth([self._sig()], path) == 1
+        for _ in range(4):
+            assert log_shortability_ground_truth([self._sig()], path) == 0
+        assert len(self._rows(path)) == 1
+
+    def test_a_new_ticker_still_gets_logged_same_day(self, tmp_path):
+        path = tmp_path / "gt.csv"
+        log_shortability_ground_truth([self._sig("ABC")], path)
+        assert log_shortability_ground_truth([self._sig("XYZ")], path) == 1
+        assert {r["ticker"] for r in self._rows(path)} == {"ABC", "XYZ"}
+
+    def test_mixed_batch_logs_only_the_unseen(self, tmp_path):
+        path = tmp_path / "gt.csv"
+        log_shortability_ground_truth([self._sig("ABC")], path)
+        n = log_shortability_ground_truth([self._sig("ABC"), self._sig("XYZ")], path)
+        assert n == 1
+        assert len(self._rows(path)) == 2
+
+    def test_dedupe_is_case_insensitive_on_ticker(self, tmp_path):
+        path = tmp_path / "gt.csv"
+        log_shortability_ground_truth([self._sig("ABC")], path)
+        assert log_shortability_ground_truth([self._sig("abc")], path) == 0
+
+    def test_a_prior_days_row_does_not_block_today(self, tmp_path):
+        """Dedupe is per DAY - the point is a time series, not a one-shot snapshot."""
+        import csv
+        path = tmp_path / "gt.csv"
+        log_shortability_ground_truth([self._sig("ABC")], path)
+        rows = self._rows(path)
+        rows[0]["logged_at"] = "2020-01-01T09:30:00"
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            w.writeheader()
+            w.writerows(rows)
+
+        assert log_shortability_ground_truth([self._sig("ABC")], path) == 1
+        assert len(self._rows(path)) == 2
+
+    def test_signals_without_schwab_data_are_never_logged(self, tmp_path):
+        path = tmp_path / "gt.csv"
+        s = sig()
+        s.schwab_is_shortable = None
+        assert log_shortability_ground_truth([s], path) == 0
+        assert not path.exists()

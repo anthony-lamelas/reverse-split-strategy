@@ -81,6 +81,31 @@ def minutes_until_open(ts=None) -> float:
     return (market_open_et(ts) - ts).total_seconds() / 60.0
 
 
+def in_entry_window(ts=None, before_min: float = 15.0,
+                    after_min: float = 15.0) -> tuple[bool, float]:
+    """Is `ts` close enough to the open to place the day's entries?
+
+    Returns `(ok, minutes_until_open)`, where positive minutes mean "before the open".
+
+    Deliberately built on `minutes_until_open()` rather than `is_market_hours()`: the
+    scheduled run fires at 9:25, five minutes *before* the 9:30 open, so an
+    is-market-hours test would reject the on-time case and accept every late one.
+
+    Strategy B enters at the open, so a session that fires hours late is not the trade
+    that was backtested - runs were observed at 12:15, 17:07 and 23:32 ET when the host
+    slept through its trigger and the scheduler caught up on wake.
+    """
+    mins = minutes_until_open(ts)
+    return (-after_min <= mins <= before_min), mins
+
+
+def describe_window(minutes_until: float) -> str:
+    """Human-readable position relative to the open, for logs and alerts."""
+    if minutes_until >= 0:
+        return f"{minutes_until:.0f} min before the open"
+    return f"{abs(minutes_until):.0f} min after the open"
+
+
 def is_market_hours(ts=None) -> bool:
     ts = now_et() if ts is None else pd.Timestamp(ts)
     if ts.tzinfo is None:

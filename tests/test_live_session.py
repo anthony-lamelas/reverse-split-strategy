@@ -236,3 +236,132 @@ class TestQuoteCollection:
 
     def test_ignores_non_actionable_signals(self):
         assert sess.collect_quote_tickers([sig("ABC", status="UPCOMING")], []) == []
+
+
+class TestWriteAheadLedger:
+    """A crash between "order sent" and "order recorded" must not double-enter.
+
+    The ledger is normally saved once, at the end of a run, so an in-memory record
+    would not survive a crash. Entries and covers therefore flush their intent to disk
+    *before* the order can reach the broker. This became load-bearing when the
+    scheduled task changed from firing once a day to repeating every five minutes
+    across the entry window: a retry is now minutes away, not a day.
+    """
+
+    def test_entry_intent_is_on_disk_before_the_order_is_sent(self, tmp_path):
+        ledger = tmp_path / "positions.json"
+        positions = []
+        seen = {}
+
+        class CrashingManager(RecordingManager):
+            def submit_entry(self, signal, quote, client_order_id=None):
+                # Whatever is durable at the instant the broker could see the order.
+                seen["on_disk"] = ps.load_positions(ledger)
+                raise RuntimeError("process died mid-submit")
+
+        with pytest.raises(RuntimeError):
+            sess.process_entries([sig()], positions, CrashingManager(), QUOTES,
+                                 sess.SessionReport(mode="DRY_RUN"), 0.20,
+                                 persist=lambda: ps.save_positions(ledger, positions))
+
+        assert [p["ticker"] for p in seen["on_disk"]] == ["ABC"]
+        assert seen["on_disk"][0]["status"] == ps.PENDING_ENTRY
+
+    def test_a_crashed_entry_is_not_reopened_five_minutes_later(self, tmp_path):
+        ledger = tmp_path / "positions.json"
+        positions = []
+
+        class CrashingManager(RecordingManager):
+            def submit_entry(self, signal, quote, client_order_id=None):
+                raise RuntimeError("process died mid-submit")
+
+        with pytest.raises(RuntimeError):
+            sess.process_entries([sig()], positions, CrashingManager(), QUOTES,
+                                 sess.SessionReport(mode="DRY_RUN"), 0.20,
+                                 persist=lambda: ps.save_positions(ledger, positions))
+
+        # The repeating trigger fires again; a fresh process loads the ledger.
+        reloaded = ps.load_positions(ledger)
+        mgr = RecordingManager()
+        sess.process_entries([sig()], reloaded, mgr, QUOTES,
+                             sess.SessionReport(mode="DRY_RUN"), 0.20,
+                             persist=lambda: ps.save_positions(ledger, reloaded))
+
+        assert "entry:ABC" not in mgr.calls, "must not short a ticker we may already hold"
+        assert len(ps.live_positions(reloaded)) == 1
+
+    def test_repeated_runs_open_exactly_one_position(self, tmp_path):
+        ledger = tmp_path / "positions.json"
+        positions = []
+        for _ in range(3):
+            sess.process_entries([sig()], positions, RecordingManager(), QUOTES,
+                                 sess.SessionReport(mode="DRY_RUN"), 0.20,
+                                 persist=lambda: ps.save_positions(ledger, positions))
+        assert len(ps.live_positions(positions)) == 1
+
+    def test_a_failed_ledger_write_blocks_the_order(self):
+        """If we cannot record the intent, we must not create the obligation."""
+        positions = []
+        mgr = RecordingManager()
+        report = sess.SessionReport(mode="DRY_RUN")
+
+        def broken_persist():
+            raise OSError("disk full")
+
+        sess.process_entries([sig()], positions, mgr, QUOTES, report, 0.20,
+                             persist=broken_persist)
+
+        assert "entry:ABC" not in mgr.calls
+        assert ps.live_positions(positions) == []
+        assert any("could not persist" in n for n in report.notes)
+
+    def test_vetoed_entries_write_nothing(self):
+        """Most signals are vetoed; they must not litter the ledger or touch disk."""
+        positions = []
+        writes = []
+        sess.process_entries([sig(schwab_is_shortable=False)], positions,
+                             RecordingManager(), QUOTES,
+                             sess.SessionReport(mode="DRY_RUN"), 0.20,
+                             persist=lambda: writes.append(1))
+        assert positions == []
+        assert writes == []
+
+    def test_cover_intent_is_on_disk_before_the_cover_is_sent(self, tmp_path):
+        ledger = tmp_path / "positions.json"
+        positions = [open_position(exit_date="2026-08-01")]
+        seen = {}
+
+        class WatchingManager(RecordingManager):
+            def submit_cover(self, ticker, shares, quote):
+                seen["on_disk"] = ps.load_positions(ledger)
+                return super().submit_cover(ticker, shares, quote)
+
+        sess.process_exits(positions, WatchingManager(), QUOTES,
+                           sess.SessionReport(mode="DRY_RUN"), as_of=TODAY,
+                           persist=lambda: ps.save_positions(ledger, positions))
+
+        assert seen["on_disk"][0]["status"] == ps.PENDING_EXIT
+
+    def test_a_refused_cover_returns_the_position_to_open(self):
+        """Nothing is working at the broker, so the position must stay coverable."""
+        positions = [open_position(exit_date="2026-08-01", tp_order_id=None)]
+        mgr = RecordingManager()
+        # No quote for ABC -> submit_cover declines, so nothing is resting.
+        sess.process_exits(positions, mgr, {}, sess.SessionReport(mode="DRY_RUN"),
+                           as_of=TODAY)
+        assert positions[0]["status"] == ps.OPEN
+
+    def test_reconcile_halts_when_a_cover_was_never_recorded(self, monkeypatch):
+        """PENDING_EXIT with no order id is the "did I cover?" state. Ask a human."""
+        from split_strategy.broker import accounts as acct
+        pos = open_position(exit_date="2026-09-01")
+        pos["status"] = ps.PENDING_EXIT
+        pos["exit_order_id"] = None
+        monkeypatch.setattr(acct, "get_broker_positions",
+                            lambda c, a: {"ABC": BrokerPosition("ABC", short_shares=100)})
+        report = sess.SessionReport(mode="LIVE")
+
+        ok = sess.reconcile_and_sync([pos], object(), "HASH", OrderMode.LIVE, report)
+
+        assert ok is False
+        assert "covering twice would go long" in report.halt_reason

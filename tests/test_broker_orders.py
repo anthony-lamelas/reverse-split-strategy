@@ -126,7 +126,25 @@ class TestEntryGating:
         assert "capital constrained" in self.mgr.entry_block_reason(sig(capital_ok=False), TIGHT)
 
     def test_zero_shares_is_blocked(self):
-        assert "share quantity" in self.mgr.entry_block_reason(sig(shares=0), TIGHT)
+        assert self.mgr.entry_block_reason(sig(shares=0), TIGHT) is not None
+
+    def test_no_price_reads_as_a_data_problem(self):
+        reason = self.mgr.entry_block_reason(sig(shares=0, current_price=None), TIGHT)
+        assert "missing or invalid price" in reason
+
+    def test_notional_too_small_says_so_instead_of_blaming_the_data(self):
+        """A sizing choice and missing data used to produce the same message.
+
+        At a small notional every stock priced above it buys zero shares and is
+        skipped - silently truncating the tradeable universe to cheap names while the
+        log claimed the price was missing. Sizing skips must be self-explanatory.
+        """
+        reason = self.mgr.entry_block_reason(
+            sig(shares=0, current_price=45.88, notional=10.0), TIGHT)
+
+        assert "buys 0 shares" in reason
+        assert "45.88" in reason
+        assert "missing or invalid price" not in reason
 
 
 class TestDailyLimits:

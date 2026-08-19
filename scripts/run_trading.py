@@ -11,13 +11,19 @@ Schwab refresh tokens expire every 7 days and require an interactive browser log
 
 Going live requires BOTH `--live` and `--i-am-sure`, so a stray flag in a scheduled
 task can never place real orders.
+
+Exit codes (Task Scheduler records these as LastTaskResult):
+    0  clean run
+    1  halted: auth, equity, or ledger/broker reconciliation failure
+    2  refused: --live without --i-am-sure
+    3  halted: STOP kill-switch file present
+    4  halted: ran outside the entry window (LIVE only)
+    5  halted: no live quotes, so nothing could be entered or covered
 """
 import argparse
 import json
 import sys
 from pathlib import Path
-
-import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT / "src"))
@@ -26,6 +32,7 @@ from split_strategy import config
 from split_strategy.broker.quotes import get_quotes
 from split_strategy.broker.schwab_orders import OrderManager, OrderMode, RiskLimits
 from split_strategy.live import calendar as mcal
+from split_strategy.live import heartbeat
 from split_strategy.live import session as sess
 from split_strategy.signals import portfolio_state as ps
 from split_strategy.signals.generate import generate_signals
@@ -77,6 +84,29 @@ def check_kill_switch() -> bool:
     return (ROOT / "STOP").exists()
 
 
+def alert_stranded_positions(args, reason: str) -> None:
+    """Page if a position is due to cover today and this run will not cover it.
+
+    Halting a mistimed or degraded run is the safe choice for *entries*, but it also
+    leaves anything past its exit date sitting open, with the resting take-profit as
+    the only remaining automated protection. So this has to be loud and name names.
+    """
+    try:
+        positions = ps.load_positions(ledger_path(args.live))
+        due = ps.positions_due_for_exit(positions, mcal.today_et())
+    except Exception as e:
+        print(f"[stranded] could not check open positions: {str(e)[:120]}")
+        return
+    if not due:
+        return
+    tickers = ", ".join(p.get("ticker", "?") for p in due)
+    msg = (f"{len(due)} position(s) due to cover were NOT covered ({reason}): "
+           f"{tickers}. Cover manually.")
+    print(f"[stranded] {msg}")
+    if not args.no_alert:
+        send_text("SplitShort: UNCOVERED", msg[:140])
+
+
 def do_login() -> int:
     from split_strategy.broker.schwab_auth import SchwabAuthError, get_client
 
@@ -98,20 +128,14 @@ def do_login() -> int:
         return 1
 
 
-def token_age_days() -> float | None:
-    path = Path(config.SCHWAB_TOKEN_PATH)
-    if not path.exists():
-        return None
-    age = pd.Timestamp.now() - pd.Timestamp(path.stat().st_mtime, unit="s")
-    return age.total_seconds() / 86400.0
-
-
 def warn_if_token_expiring(quiet: bool = False) -> None:
     """Text the day before the 7-day refresh window closes."""
+    from split_strategy.broker.schwab_auth import REFRESH_TOKEN_DAYS, token_age_days
+
     age = token_age_days()
     if age is None:
         return
-    days_left = 7.0 - age
+    days_left = REFRESH_TOKEN_DAYS - age
     if 0 < days_left <= 2:
         msg = f"Schwab login expires in ~{days_left:.1f}d. Run: run_trading.py --login"
         print(f"[token] {msg}")
@@ -124,7 +148,8 @@ def warn_if_token_expiring(quiet: bool = False) -> None:
             send_text("SplitShort: login expired", msg)
 
 
-def main() -> int:
+def _session(ctx: dict) -> int:
+    """The trading session proper. `ctx` carries state out for the heartbeat."""
     ap = argparse.ArgumentParser(description="Reverse-split short trading session")
     ap.add_argument("--login", action="store_true", help="run the weekly Schwab OAuth login and exit")
     ap.add_argument("--live", action="store_true", help="enable REAL order submission")
@@ -145,6 +170,8 @@ def main() -> int:
 
     mode = OrderMode.LIVE if args.live else OrderMode.DRY_RUN
     report = sess.SessionReport(mode=mode.value)
+    ctx["mode"] = mode.value
+    ctx["heartbeat"] = True
 
     if check_kill_switch():
         report.halted = True
@@ -156,6 +183,33 @@ def main() -> int:
     if mode is OrderMode.LIVE and not mcal.is_trading_day(mcal.today_et()):
         print("Market closed today (weekend or holiday). Nothing to do.")
         return 0
+
+    # --- entry timing --------------------------------------------------------------
+    # Strategy B is defined as "short at the open, cover at the open". A session that
+    # fires hours late is not that trade, so LIVE halts outright rather than filling at
+    # a price the backtest never measured. DRY_RUN continues (tagged) so shortability
+    # ground-truth collection keeps running and the tag measures how often LIVE *would*
+    # have halted.
+    window_ok, mins_to_open = mcal.in_entry_window(
+        before_min=config.ENTRY_WINDOW_BEFORE_MIN,
+        after_min=config.ENTRY_WINDOW_AFTER_MIN,
+    )
+    ctx["in_window"] = window_ok
+    if not window_ok:
+        detail = (f"ran {mcal.describe_window(mins_to_open)}; entry window is "
+                  f"{config.ENTRY_WINDOW_BEFORE_MIN:.0f} min before to "
+                  f"{config.ENTRY_WINDOW_AFTER_MIN:.0f} min after")
+        if mode is OrderMode.LIVE:
+            report.halted = True
+            report.halt_reason = f"outside entry window: {detail}"
+            print(f"HALTED: {report.halt_reason}")
+            if not args.no_alert:
+                send_text("SplitShort: HALTED (timing)", report.halt_reason[:140])
+            alert_stranded_positions(args, "run halted: outside entry window")
+            write_audit(report)
+            return 4
+        report.notes.append(f"OUT_OF_WINDOW (would halt in live): {detail}")
+        print(f"[timing] OUT_OF_WINDOW (would halt in live): {detail}")
 
     # --- auth -------------------------------------------------------------------
     client = account_hash = None
@@ -237,7 +291,20 @@ def main() -> int:
     tickers = sess.collect_quote_tickers(signals, positions)
     quotes = get_quotes(client, tickers) if client is not None else {}
     if tickers and not quotes:
-        report.notes.append("no live quotes available; entries and covers will be skipped")
+        # There is work to do and no market data to do it with - usually an expired
+        # Schwab login. Every entry and cover would be silently skipped, so this must
+        # NOT report success: it went unnoticed for six days in August because the run
+        # logged a note and still exited 0.
+        report.halted = True
+        report.halt_reason = (f"no live quotes for {len(tickers)} ticker(s); "
+                              f"entries and covers cannot proceed (check --login)")
+        print(f"HALTED: {report.halt_reason}")
+        if not args.no_alert:
+            send_text("SplitShort: NO QUOTES", report.halt_reason[:140])
+        alert_stranded_positions(args, "run halted: no live quotes")
+        ps.save_positions(path, positions)
+        write_audit(report)
+        return 5
 
     limits = RiskLimits(
         max_new_shorts_per_day=config.MAX_NEW_SHORTS_PER_DAY,
@@ -248,9 +315,15 @@ def main() -> int:
     manager = OrderManager(mode=mode, client=client, account_hash=account_hash, limits=limits)
 
     # --- exits before entries -------------------------------------------------------
-    sess.process_exits(positions, manager, quotes, report)
+    # `persist` lets the session flush the ledger before an order can reach the broker,
+    # so a crash mid-run cannot leave a real position unrecorded.
+    def persist() -> None:
+        ps.save_positions(path, positions)
+
+    sess.process_exits(positions, manager, quotes, report, persist=persist)
     sess.attach_take_profits(positions, manager, report, TAKE_PROFIT_PCT)
-    sess.process_entries(signals, positions, manager, quotes, report, TAKE_PROFIT_PCT)
+    sess.process_entries(signals, positions, manager, quotes, report, TAKE_PROFIT_PCT,
+                         persist=persist)
 
     positions = ps.prune_archive(positions)
     ps.save_positions(path, positions)
@@ -272,6 +345,22 @@ def main() -> int:
             send_text(f"SplitShort: {r['ticker']}",
                       f"{r['ticker']}: short {r['quantity']} @ limit {r['limit_price']}")
     return 0
+
+
+def main() -> int:
+    """Run the session, then record a heartbeat regardless of how it ended.
+
+    The heartbeat is what an off-machine watchdog reads. It has to be written on the
+    failure paths too - a run that halted still proves the host woke up and executed,
+    which is a different problem from the host never running at all.
+    """
+    ctx = {"mode": "DRY_RUN", "in_window": False, "heartbeat": False}
+    code = _session(ctx)
+    if ctx["heartbeat"]:
+        err = heartbeat.record(ctx["mode"], ctx["in_window"], code)
+        if err:
+            print(f"[heartbeat] not recorded: {err}")
+    return code
 
 
 if __name__ == "__main__":

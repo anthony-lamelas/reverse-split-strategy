@@ -8,6 +8,9 @@ caller did first, instead of cleanly falling through to the interactive login fl
 """
 from __future__ import annotations
 
+import json
+import os
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -111,3 +114,56 @@ def test_no_token_file_interactive_runs_login_flow(monkeypatch, keys_configured,
 
     assert result is fresh_client
     login_flow.assert_called_once()
+
+
+# ---------------------------------------------------------------------------------
+# token age
+# ---------------------------------------------------------------------------------
+# The 7-day refresh clock lives in `creation_timestamp` inside the token file. The
+# file itself is rewritten every ~30 min when the access token refreshes, so reading
+# its mtime reports the last *refresh*, not the last *login*. That bug pinned the
+# computed age near zero and silently disabled the expiry warning, letting the login
+# lapse unannounced twice in August 2026.
+
+def _write_token(path, created_epoch: float, *, include_key: bool = True) -> None:
+    body = {"token": {"expires_at": created_epoch + 1800}}
+    if include_key:
+        body["creation_timestamp"] = created_epoch
+    path.write_text(json.dumps(body), encoding="utf-8")
+
+
+def test_token_age_reads_creation_timestamp_not_mtime(tmp_path):
+    """The exact shape of the real bug: mtime is fresh, creation_timestamp is old."""
+    token = tmp_path / "token.json"
+    six_days_ago = time.time() - 6 * 86400
+    _write_token(token, six_days_ago)
+    # Touch it, the way a 30-minute access-token refresh would.
+    os.utime(token, (time.time(), time.time()))
+
+    age = schwab_auth.token_age_days(token)
+
+    assert age == pytest.approx(6.0, abs=0.01)
+
+
+def test_token_age_falls_back_to_mtime_without_the_key(tmp_path):
+    token = tmp_path / "token.json"
+    _write_token(token, time.time(), include_key=False)
+    three_days_ago = time.time() - 3 * 86400
+    os.utime(token, (three_days_ago, three_days_ago))
+
+    assert schwab_auth.token_age_days(token) == pytest.approx(3.0, abs=0.01)
+
+
+def test_token_age_is_none_when_no_file(tmp_path):
+    assert schwab_auth.token_age_days(tmp_path / "nope.json") is None
+
+
+def test_expiry_warning_window_is_reachable(tmp_path):
+    """Regression: with the mtime bug this could never be true, so nothing ever fired."""
+    token = tmp_path / "token.json"
+    _write_token(token, time.time() - 5.5 * 86400)
+    os.utime(token, (time.time(), time.time()))
+
+    days_left = schwab_auth.REFRESH_TOKEN_DAYS - schwab_auth.token_age_days(token)
+
+    assert 0 < days_left <= 2

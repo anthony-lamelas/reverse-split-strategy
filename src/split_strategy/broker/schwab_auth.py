@@ -91,6 +91,38 @@ def get_client(interactive: bool = False):
     )
 
 
+#: Schwab refresh-token lifetime. Hard limit; it cannot be extended or renewed.
+REFRESH_TOKEN_DAYS = 7.0
+
+
+def token_age_days(path=None) -> Optional[float]:
+    """Age of the cached *refresh* token in days, or None if there is no token.
+
+    Read from `creation_timestamp` inside the file, never from the file's mtime. The
+    token file is rewritten roughly every 30 minutes when the access token
+    auto-refreshes, so mtime tracks the last refresh rather than the last interactive
+    login. Deriving age from mtime pinned it near zero forever, which silently
+    disabled the expiry warning and let the login lapse unannounced twice in August
+    2026 (4th-10th and 17th-19th), during which every run placed no orders and still
+    reported success.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    token_path = Path(path or config.SCHWAB_TOKEN_PATH)
+    if not token_path.exists():
+        return None
+    try:
+        created = float(json.loads(token_path.read_text(encoding="utf-8"))
+                        ["creation_timestamp"])
+    except (OSError, ValueError, KeyError, TypeError):
+        # Unreadable, or a token file predating the key: fall back to mtime. Less
+        # accurate, but better than reporting "no token" and skipping the warning.
+        created = token_path.stat().st_mtime
+    age = datetime.now(timezone.utc) - datetime.fromtimestamp(created, timezone.utc)
+    return age.total_seconds() / 86400.0
+
+
 def resolve_account_hash(client) -> str:
     """Return the account hash to trade (SCHWAB_ACCOUNT_HASH or the first account)."""
     if config.SCHWAB_ACCOUNT_HASH:

@@ -20,7 +20,6 @@ pretending they reflect real fills.
 from __future__ import annotations
 
 import json
-import uuid
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -141,9 +140,17 @@ def malformed_positions(positions: Iterable[dict]) -> list[dict]:
 # mutations
 # ----------------------------------------------------------------------------------
 
-def new_client_order_id(ticker: str) -> str:
-    """Idempotency key so a retried or double-run submit can be recognized."""
-    return f"rss-{(ticker or '').upper()}-{uuid.uuid4().hex[:12]}"
+def new_client_order_id(ticker: str, as_of=None) -> str:
+    """Idempotency key so a retried or double-run submit can be recognized.
+
+    Deterministic per (ticker, trade date). The old `uuid4()` version generated a
+    fresh id on every call, so two runs on the same day produced two unrelated ids
+    for what is conceptually one order - useless as an idempotency key exactly when
+    it is needed. This matters now that the scheduled task repeats every 5 minutes
+    across the entry window rather than firing once.
+    """
+    day = pd.Timestamp(as_of) if as_of is not None else pd.Timestamp.now()
+    return f"rss-{(ticker or '').upper()}-{day.strftime('%Y%m%d')}"
 
 
 def add_position(

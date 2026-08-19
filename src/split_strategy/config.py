@@ -104,6 +104,22 @@ MAX_HTB_RATE = float(os.environ.get("MAX_HTB_RATE", "100"))
 # one-cent spread is ~11% - crossing it twice costs far more than the strategy's edge.
 MAX_SPREAD_PCT = float(os.environ.get("MAX_SPREAD_PCT", "0.05"))
 
+# Absolute ceiling on a SINGLE position's notional, in dollars. Unset/0 = no cap.
+# TRADE_PCT alone is a *proportional* cap, so the dollar size it produces drifts
+# silently as account equity changes - fine at steady state, wrong when you are
+# deliberately trading tiny to validate the live path. This makes "$50 a trade" mean
+# $50 regardless of equity, and unlike a CLI flag it cannot be forgotten on one run.
+MAX_TRADE_NOTIONAL = float(os.environ.get("MAX_TRADE_NOTIONAL", "0")) or None
+
+# --- Entry timing window ---
+# Strategy B enters at the OPEN. A run that fires hours late is not the trade that was
+# backtested, so live sessions outside this window halt rather than trade. Scheduled
+# runs were observed firing at 12:15, 17:07 and 23:32 ET when the host slept through the
+# 9:25 trigger and Task Scheduler's StartWhenAvailable caught up on wake.
+# Expressed as minutes either side of the 9:30 ET open: 15/15 => 09:15-09:45.
+ENTRY_WINDOW_BEFORE_MIN = float(os.environ.get("ENTRY_WINDOW_BEFORE_MIN", "15"))
+ENTRY_WINDOW_AFTER_MIN = float(os.environ.get("ENTRY_WINDOW_AFTER_MIN", "15"))
+
 # Optional SMTP alerting for the daily signal run (all optional; no-op if unset).
 SMTP_HOST = os.environ.get("SMTP_HOST")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
