@@ -80,7 +80,7 @@ def get_client(interactive: bool = False):
     if not interactive:
         raise SchwabAuthError(
             "No Schwab token found. Run the one-time login: "
-            "python scripts/run_signals.py --login"
+            "python scripts/run_trading.py --login"
         )
 
     return client_from_login_flow(

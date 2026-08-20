@@ -618,12 +618,12 @@ against the edge.
    ├─ 1. Scrapers          → reverse_splits          (python -m split_strategy.scrapers.runner)
    ├─ 2. EDGAR backfill    → reverse_splits_edgar    (scripts/nightly_job.py)
    ├─ 3. Daily EDGAR scan  → early_edgar_splits      (scripts/scan_early_edgar.py)
-   └─ 4. Signal check      → console + SMS + JSON log (scripts/run_signals.py, DRY-RUN)
+   └─ 4. Signal check      → console + SMS + JSON log (scripts/run_trading.py, DRY-RUN)
 ```
 
 ### 8.2 The signal run
 
-`scripts/run_signals.py` performs, in order:
+`scripts/run_trading.py` performs, in order:
 
 1. Load the open-positions ledger; free capital from positions past their planned exit
 2. Generate ranked signals (§3.4)
@@ -675,7 +675,7 @@ so it accumulates risk-free.
 
 - OAuth via `schwab-py`; token cached to `.schwab_token.json` (gitignored)
 - **Refresh tokens hard-expire every 7 days** with no extension possible
-- Therefore: `python scripts/run_signals.py --login` must be re-run ~weekly
+- Therefore: `python scripts/run_trading.py --login` must be re-run ~weekly
 - **Fully unattended live trading is impossible on Schwab** — the CI job is dry-run only,
   because GitHub Actions has no browser for the interactive re-login
 
@@ -747,10 +747,10 @@ whether the price pattern exists.
 
 ```bash
 # --- Daily operation ---
-python scripts/run_signals.py                              # dry-run (default), today's signals
-python scripts/run_signals.py --min-confidence High --lookback 7
-python scripts/run_signals.py --login                      # weekly Schwab OAuth re-login
-python scripts/run_signals.py --live                       # LIVE ORDERS - real money
+python scripts/run_trading.py                             # dry-run (default), today's signals
+python scripts/run_trading.py --min-confidence High
+python scripts/run_trading.py --login                      # weekly Schwab OAuth re-login
+python scripts/run_trading.py --live --i-am-sure          # LIVE ORDERS - real money
 
 # --- Data refresh ---
 python -m split_strategy.scrapers.runner                   # scrape split events

@@ -42,11 +42,11 @@ TAKE_PROFIT_PCT = 0.20  # Strategy B
 
 
 def ledger_path(live: bool) -> Path:
-    return ROOT / "DATA" / f"open_positions_{'live' if live else 'dryrun'}.json"
+    return config.DATA_DIR / f"open_positions_{'live' if live else 'dryrun'}.json"
 
 
 def audit_path() -> Path:
-    return ROOT / "logs" / "trading_audit.jsonl"
+    return config.LOG_DIR / "trading_audit.jsonl"
 
 
 def write_audit(report: sess.SessionReport) -> None:
@@ -81,8 +81,18 @@ def send_text(subject: str, body: str) -> bool:
 
 
 def check_kill_switch() -> bool:
-    """A STOP file in the repo root halts trading without touching code or config."""
-    return (ROOT / "STOP").exists()
+    """Halt trading without touching code: a STOP file, or STOP_TRADING=1.
+
+    The env route exists for hosts with no convenient filesystem - on a serverless
+    runner setting a secret is far quicker than writing a file into a mounted volume,
+    and an emergency stop should not depend on the slower of the two.
+    """
+    # Both locations are honoured on purpose. DATA_DIR is what a cloud host can reach;
+    # the repo root is what the docs have always said and what muscle memory reaches
+    # for. An emergency stop is the wrong place to be strict about paths.
+    return (config.STOP_TRADING
+            or (config.DATA_DIR / "STOP").exists()
+            or (ROOT / "STOP").exists())
 
 
 def alert_stranded_positions(args, reason: str) -> None:
@@ -176,7 +186,8 @@ def _session(ctx: dict) -> int:
 
     if check_kill_switch():
         report.halted = True
-        report.halt_reason = "STOP file present in repo root"
+        report.halt_reason = ("STOP_TRADING is set" if config.STOP_TRADING
+                              else f"STOP file present at {config.DATA_DIR / 'STOP'}")
         print(f"HALTED: {report.halt_reason}")
         write_audit(report)
         return 3
@@ -286,7 +297,8 @@ def _session(ctx: dict) -> int:
         from split_strategy.signals.generate import (enrich_with_schwab_shortability,
                                                      log_shortability_ground_truth)
         enrich_with_schwab_shortability(signals, client)
-        log_shortability_ground_truth(signals, ROOT / "DATA" / "shortability_ground_truth.csv")
+        log_shortability_ground_truth(
+            signals, config.DATA_DIR / "shortability_ground_truth.csv")
 
     # --- quotes -------------------------------------------------------------------
     tickers = sess.collect_quote_tickers(signals, positions)

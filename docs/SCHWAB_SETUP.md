@@ -4,7 +4,7 @@ This guide takes you from "API access approved, no keys yet" to a working **dry-
 signal bot, and explains what live trading would require.
 
 ## What you're building
-`scripts/run_signals.py` reads the confirmed upcoming splits from MongoDB
+`scripts/run_trading.py` reads the confirmed upcoming splits from MongoDB
 (`early_edgar_splits`), applies the chosen strategy (enter short the morning after the
 announcement, exit at the open on the execution date, 40% stop, skip >30% gap-ups,
 5%-equity sizing), and either **logs the orders it would place (dry-run)** or submits
@@ -12,7 +12,7 @@ them to Schwab (live).
 
 ## Hard realities (read first)
 - **No paper trading.** Schwab's Trader API only connects to live accounts. "Paper"
-  here = our dry-run mode (`scripts/run_signals.py` with no `--live`), which never
+  here = our dry-run mode (`scripts/run_trading.py` with no `--live`), which never
   contacts Schwab.
 - **7-day token expiry.** Schwab refresh tokens expire every 7 days and cannot be
   extended. So `--login` must be re-run ~weekly; fully unattended live automation is
@@ -46,7 +46,7 @@ SCHWAB_CALLBACK_URL=https://127.0.0.1:8182
 
 ## Step 3 — First login (mint the token)
 ```bash
-python scripts/run_signals.py --login
+python scripts/run_trading.py --login
 ```
 This opens a browser to Schwab, you log in and approve, and the token is cached to
 `SCHWAB_TOKEN_PATH`. You'll see `Login OK` and an account HTTP 200. Re-run this weekly
@@ -54,7 +54,7 @@ This opens a browser to Schwab, you log in and approve, and the token is cached 
 
 ## Step 4 — Dry-run (safe, no Schwab needed)
 ```bash
-python scripts/run_signals.py --min-confidence High --lookback 7
+python scripts/run_trading.py --min-confidence High
 ```
 Prints the ranked candidate table (entry/exit dates, live price, gap-up %, share size,
 40% stop, and whether each is likely shortable), constructs the SELL_SHORT orders in
@@ -64,7 +64,7 @@ Dry-run only needs MongoDB + internet.
 ## Step 5 — Going live (later, deliberately)
 Once you've watched dry-run for a while and have a valid token:
 ```bash
-python scripts/run_signals.py --live --min-confidence High
+python scripts/run_trading.py --live --i-am-sure --min-confidence High
 ```
 This submits real `SELL_SHORT` market orders for `ENTER_NOW`/`HOLDING` signals. Orders
 that can't borrow / aren't marginable reject and are recorded (`REJECTED`) — the run
@@ -84,5 +84,5 @@ run those locally/attended.
 - `src/split_strategy/signals/generate.py` — builds ranked signals from `early_edgar_splits`.
 - `src/split_strategy/broker/schwab_auth.py` — OAuth client + token handling.
 - `src/split_strategy/broker/schwab_orders.py` — order construction + dry-run/live submission.
-- `scripts/run_signals.py` — the daily entrypoint.
+- `scripts/run_trading.py` — the daily entrypoint.
 - `src/split_strategy/config.py` — all `SCHWAB_*` and sizing settings.

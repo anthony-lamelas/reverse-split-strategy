@@ -47,8 +47,18 @@ SEC_BASE_URL = "https://data.sec.gov"
 SEC_ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data"
 REQUEST_DELAY = 0.2
 
-# Logging
-LOG_DIR = ROOT_DIR / "logs"
+# --- Writable state locations ---
+# Everything the trading path persists lives under these two, and both are
+# env-overridable so the same code runs unchanged on a host with no repo checkout.
+# On Modal these point at a mounted Volume (/data, /data/logs); locally they default
+# to the repo, so behaviour is identical to before.
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(ROOT_DIR / "DATA")))
+LOG_DIR = Path(os.environ.get("LOG_DIR", str(ROOT_DIR / "logs")))
+
+# Kill switch. A STOP file under DATA_DIR halts trading, and STOP_TRADING=1 does the
+# same via env - on a serverless host setting a secret is far quicker than writing a
+# file into a Volume, and an emergency stop should not depend on the slower path.
+STOP_TRADING = os.environ.get("STOP_TRADING", "").strip().lower() in ("1", "true", "yes")
 # OpenAI Configuration
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
@@ -83,7 +93,14 @@ DEFAULT_ACCOUNT_SIZE = float(os.environ.get("ACCOUNT_SIZE", "10000"))
 # tail-risk lever until live behavior is confirmed against the backtest).
 TRADE_PCT = float(os.environ.get("TRADE_PCT", "0.02"))
 STOP_LOSS_PCT = 0.40      # legacy reference only - validated strategy uses NO stop
-MAX_GAP_UP_PCT = 0.30     # skip entry if it gaps up >30% vs prior close
+# Skip entry if it gaps up more than this vs the prior close. Default: NO filter.
+# The walk-forward selected max_gap_up=inf in 9 of 11 folds (0.30 only in the two
+# earliest, smallest-training-set folds) - see analysis/walk_forward_results.md.
+# Live previously hard-coded 0.30, which vetoed trades the validated strategy took,
+# and in the wrong direction: for a SHORT, a gap UP is entry at a higher price with
+# more room to fall. Set MAX_GAP_UP_PCT=0.30 to restore the old behaviour if you
+# want the unvalidated safety veto back.
+MAX_GAP_UP_PCT = float(os.environ.get("MAX_GAP_UP_PCT", "inf"))
 # Max total notional committed across ALL concurrently open positions, as a fraction
 # of account equity. Trades routinely overlap (backtest found a median of 13-55
 # concurrent positions), so without this cap, position sizing silently assumes

@@ -29,7 +29,6 @@ the token expires.
 | Job | Where | Trades? | Why |
 |---|---|---|---|
 | Scrapers, EDGAR enrichment, LLM scanner | GitHub Actions, 5am ET daily | No | Data collection only; no secrets beyond Mongo/OpenAI |
-| `run_signals.py` (report + SMS) | GitHub Actions, same run | **Never** — cannot place an order by construction | Safe anywhere |
 | `run_trading.py` | **Your PC**, ~9:25am ET weekdays | Yes, when `--live --i-am-sure` | Needs the token + ledger |
 | `pytest` | GitHub Actions, every push | No | Offline, no secrets |
 

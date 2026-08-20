@@ -1,5 +1,11 @@
 # Recent Backtest — Chosen 'Optimal Safe' Strategy
 
+> **SUPERSEDED — do not cite these numbers.** This file predates the `neutralize_split()`
+> fix, which corrected a bug where a reverse split's mechanical price jump was read as a
+> catastrophic loss and fired false stop-losses on every split-spanning trade. The
+> 574-trade / 60.97% figures below are unreliable. Current validated results live in
+> `analysis/walk_forward_results.md` and `analysis/live_expectations.md`.
+
 _Generated 2026-07-25 · window = last 60 days · source = `early_edgar_splits`_
 
 **Strategy:** enter short the morning after the SEC announcement, exit at the open on the execution date; 40% stop-loss; no take-profit; skip if the entry gaps up >30%; all ratios. Position size = 5% of equity per trade; 1.5% flat slippage/fees.

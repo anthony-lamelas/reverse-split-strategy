@@ -104,13 +104,3 @@ def describe_window(minutes_until: float) -> str:
     if minutes_until >= 0:
         return f"{minutes_until:.0f} min before the open"
     return f"{abs(minutes_until):.0f} min after the open"
-
-
-def is_market_hours(ts=None) -> bool:
-    ts = now_et() if ts is None else pd.Timestamp(ts)
-    if ts.tzinfo is None:
-        ts = ts.tz_localize(ET)
-    if not is_trading_day(ts):
-        return False
-    minutes = ts.hour * 60 + ts.minute
-    return 9 * 60 + 30 <= minutes < 16 * 60

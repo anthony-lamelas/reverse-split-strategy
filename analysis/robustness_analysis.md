@@ -1,5 +1,11 @@
 # Robustness Analysis
 
+> **SUPERSEDED — do not cite these numbers.** This file predates the `neutralize_split()`
+> fix, which corrected a bug where a reverse split's mechanical price jump was read as a
+> catastrophic loss and fired false stop-losses on every split-spanning trade. The
+> 574-trade / 60.97% figures below are unreliable. Current validated results live in
+> `analysis/walk_forward_results.md` and `analysis/live_expectations.md`.
+
 _Generated 2026-07-25 | window = last 60 days | n = 49 trades_
 
 ## 1. Is the sample big enough to conclude anything?

@@ -1,5 +1,11 @@
 # Reverse Split Shorting Strategy - Backtest Methodology
 
+> **SUPERSEDED — do not cite these numbers.** This file predates the `neutralize_split()`
+> fix, which corrected a bug where a reverse split's mechanical price jump was read as a
+> catastrophic loss and fired false stop-losses on every split-spanning trade. The
+> 574-trade / 60.97% figures below are unreliable. Current validated results live in
+> `analysis/walk_forward_results.md` and `analysis/live_expectations.md`.
+
 This document outlines the systematic process used to backtest the Reverse Split Shorting Strategy, including data acquisition, normalization, and the grid-search optimization algorithm.
 
 ## 1. Data Acquisition & Normalization
