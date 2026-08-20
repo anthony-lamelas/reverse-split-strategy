@@ -55,6 +55,28 @@ shortability veto, borrow), the realistic target is **+70% over ~20 months**, no
 headline +918%/+677% figures — see `analysis/live_expectations.md`. The live trading
 path has been built (§8) but not yet deployed with real capital.
 
+> **Update 2026-08-19 — these headline figures describe a universe the live system
+> no longer trades.** Partitioning the 560 pooled out-of-sample trades by entry price
+> shows the edge is monotonic in price and *unmeasurable* at the bottom: the sub-$1
+> bucket is 29 trades, mean +5.88%, **t-stat 0.46**, 95% CI [−20.6%, +32.3%]. That is
+> not evidence of losses — it is evidence of nothing, at a sample size too small to
+> resolve. **89% of the cumulative return came from names above $5.** Those cheap
+> names also cost ~5.9× their notional in margin under FINRA 4210(c)'s $2.50/share
+> floor, versus 0.4× above $1.
+>
+> A `$1.00` entry-price floor is now enforced (`config.MIN_ENTRY_PRICE`). Re-running
+> the walk-forward with that floor applied **before** parameter selection — so the
+> grid search only ever sees tradeable names, rather than slicing an old run after the
+> fact — gives **683 trades, 84.6% win, +12.66%/trade, t=16.79, 95% CI
+> [+11.18%, +14.14%]**: more trades and a *higher* t-stat than the unfiltered run.
+> `analysis/live_expectations.md` has been regenerated on that basis and supersedes
+> the +70% quoted above.
+>
+> One caveat that is not resolved: current live signal flow is ~71% sub-$1 (median
+> entry $0.39) while the backtest universe was 7% sub-$1 (median $10.00). The floor
+> therefore removes most of present-day flow. That divergence rests on 44 live
+> observations and needs more data before it is treated as real.
+
 **Most surprising finding:** every single walk-forward fold, under both selection
 methods, chose **no stop-loss**. A follow-up test confirmed that adding stops back in
 *reduced* returns at every level tested and did not reliably reduce drawdown.

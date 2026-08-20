@@ -10,8 +10,15 @@ This script re-runs the same walk-forward out-of-sample trades under those const
 so there is an honest number to judge live performance against. It also sweeps the
 spread threshold to choose the live default.
 
-Usage: python scripts/live_expectations.py
+The universe is also filtered to the entry-price floor the live system enforces
+(config.MIN_ENTRY_PRICE, $1.00). Below $1 the strategy has no measured edge -
+29 of 560 pooled trades, t=0.46, 95% CI [-20.6%, +32.3%] - and those names cost
+~5.9x their notional in margin versus 0.4x above $1. Modelling a universe the
+code refuses to trade would produce a benchmark that flatters the live system.
+
+Usage: python scripts/live_expectations.py [--floor 1.00]
 """
+import argparse
 import sys
 from pathlib import Path
 
@@ -25,6 +32,7 @@ from split_strategy.backtest.engine import INF, backtest_mega
 from split_strategy.backtest.shortability import classify_shortability, load_exchange_map
 from split_strategy.backtest.slippage import estimate_spread
 from split_strategy.backtest.walkforward import compounded_oos_curve, walk_forward
+from split_strategy import config
 
 INITIAL = 10_000.0
 LIVE_TRADE_PCT = 0.02      # config.TRADE_PCT
@@ -61,9 +69,40 @@ def spread_for_trades(pooled, prices):
     return pd.Series(out, index=pooled.index)
 
 
+def entry_price_for(events, prices):
+    """Open on the first session after the announcement - the Strategy B entry."""
+    tickers = set(prices.columns.get_level_values(0))
+    out = []
+    for _, ev in events.iterrows():
+        if ev["ticker"] not in tickers:
+            out.append(np.nan)
+            continue
+        try:
+            opens = prices[ev["ticker"]]["Open"].dropna()
+        except Exception:
+            out.append(np.nan)
+            continue
+        future = opens[opens.index > ev["t_ann"]]
+        out.append(float(future.iloc[0]) if len(future) else np.nan)
+    return pd.Series(out, index=events.index)
+
+
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--floor", type=float, default=config.MIN_ENTRY_PRICE,
+                    help="minimum entry price to model; 0 disables the filter")
+    args = ap.parse_args()
+
     events = pd.read_pickle(ROOT / "DATA" / "events_combined_cache.pkl")
     prices = pd.read_pickle(ROOT / "DATA" / "prices_full.pkl")
+
+    if args.floor and args.floor > 0:
+        ep = entry_price_for(events, prices)
+        keep = ep.notna() & (ep >= args.floor)
+        print(f"Entry-price floor ${args.floor:.2f}: keeping {keep.sum()} of "
+              f"{ep.notna().sum()} priced events "
+              f"({100 * keep.sum() / max(ep.notna().sum(), 1):.0f}%)")
+        events = events[keep].copy()
 
     print("Running walk-forward (Strategy B selection) ...")
     folds = walk_forward(
@@ -77,6 +116,12 @@ def main():
     out = ["# Live Expectations — Strategy B under real constraints\n"]
     out.append(f"_Generated {pd.Timestamp.now().date()} · {len(pooled)} pooled "
                f"out-of-sample trades_\n")
+    if args.floor and args.floor > 0:
+        out.append(
+            f"_Universe filtered to entry price >= **${args.floor:.2f}**, matching "
+            f"`config.MIN_ENTRY_PRICE`. Below that the strategy has no measured edge "
+            f"(29 trades, t=0.46, 95% CI [-20.6%, +32.3%]) and margin costs ~5.9x "
+            f"notional under FINRA 4210(c)._\n")
     out.append("The published +1208% figure assumes 5% sizing, no borrow cost, a flat "
                "1.5% for all execution costs, and no spread filter. The live system "
                "uses 2% sizing, real borrow rates, marketable limits, and a spread "

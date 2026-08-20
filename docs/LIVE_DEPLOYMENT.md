@@ -113,6 +113,10 @@ position sizes were computed from a >24h-stale price.
 | **Write-ahead ledger** | The intent to enter or cover is flushed to disk *before* the order can reach the broker, so a crash mid-submit cannot leave a real position unrecorded. |
 | **Ambiguous-cover halt** | A cover written ahead but never assigned an order id halts the next run — covering twice would flip you long. |
 | **Stranded-position alert** | Any halt that leaves a position past its cover date texts you the tickers to cover manually. |
+| **Price floor** | Refuses entries below `MIN_ENTRY_PRICE` ($1.00). The sub-$1 bucket has no measured edge — 29 of 560 pooled trades, t=0.46, 95% CI [−20.6%, +32.3%] — and costs ~5.9× notional in margin. |
+| **Margin budget** | Refuses any entry whose FINRA 4210(c) maintenance requirement would push the book past `MARGIN_EQUITY_PCT` × equity. Seeded each run from open positions, marked to live quotes. |
+| **Borrow cost** | Beyond the annualized `MAX_HTB_RATE` ceiling, caps *expected* cost (`rate × holding days / 365`) at `MAX_BORROW_COST_PCT`. A rate ceiling alone treats a 5-day and a 150-day hold identically. |
+| **Borrow drift** | Re-prices borrow on every open short each run and texts on a spike (past `BORROW_ALERT_RATE`, or `BORROW_ALERT_MULTIPLE`× entry). The entry veto fires once; a squeeze develops afterwards. |
 
 **Exit codes** (Task Scheduler records these as `LastTaskResult`):
 
@@ -219,7 +223,24 @@ MAX_SPREAD_PCT=0.05         # skip wider names
 ACCOUNT_SIZE=10000          # dry-run only; live reads real equity
 ENTRY_WINDOW_BEFORE_MIN=15  # minutes before the 9:30 open the run may still trade
 ENTRY_WINDOW_AFTER_MIN=15   # minutes after; outside this, --live halts (exit 4)
+MIN_ENTRY_PRICE=1.00        # no measured edge below $1 (t=0.46); also 5.9x margin
+MAX_TRADE_NOTIONAL=         # absolute $ ceiling per position; unset/0 = no cap
+MAX_BORROW_COST_PCT=0.05    # cap on EXPECTED borrow cost (rate x holding days/365)
+BORROW_ALERT_RATE=100       # text if an OPEN position's borrow reaches this
+BORROW_ALERT_MULTIPLE=3.0   # ...or triples from what it cost at entry
+MARGIN_EQUITY_PCT=0.5       # share of equity usable for short maintenance margin
+HOUSE_MARGIN_MULTIPLE=1.0   # Schwab charges exactly the FINRA floor ($2.50/share)
 ```
+
+**You need a MARGIN account.** Short selling is impossible in a cash account —
+every entry is rejected at the broker. Confirm with a read-only account read that
+`type` is `MARGIN`, not `CASH`, before the first live run.
+
+**Margin, not capital, is what caps concurrency.** FINRA 4210(c) requires the
+greater of **$2.50/share or 100% of market value** to hold a short below $5
+(`$5/share or 30%` at or above). That floor inverts the economics of cheap stocks:
+a $50 short of a $0.34 name needs ~$368 of margin, 7.4×. `MAX_EXPOSURE` caps
+*notional* and is blind to this — `MARGIN_EQUITY_PCT` is the real limit.
 
 Widen the entry window only deliberately. It is the guard that stops a mistimed run
 from filling at a price the backtest never measured — loosening it to "whenever the
@@ -230,9 +251,11 @@ laptop happened to wake" is how the problem it exists for looked normal for week
 ## 9. Expectations
 
 Read `analysis/live_expectations.md` before going live. Under the actual live
-constraints the realistic target is roughly **+69% over ~20 months** with an 84.8% win
-rate — **not** the +1208% headline, which assumes 5% sizing, zero borrow cost, and no
-spread filter.
+constraints — including the `$1.00` entry-price floor the code now enforces — the
+realistic target is roughly **+86% over ~20 months** with an **87.0% win rate** and
+−1.8% max drawdown, from 276 taken trades. **Not** the +1208% headline, which assumes
+5% sizing, zero borrow cost, no spread filter, and a universe that includes the sub-$1
+band where the strategy has no measured edge (t=0.46).
 
 Even that figure stays optimistic in two ways this project cannot fix without paid data:
 it assumes limit orders fill, and it inherits the survivorship bias of yfinance dropping

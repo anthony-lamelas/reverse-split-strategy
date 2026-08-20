@@ -39,16 +39,41 @@ running dry-run only on a Windows Task Scheduler job.
   worse; these stocks spike and revert before the exit date, and a stop just locks in
   the spike).
 - **20% take-profit** (a resting order placed immediately after entry fills).
-- **No gap filter, no ratio-severity filter** — trade every confirmed signal.
+- **No gap filter, no ratio-severity filter** — trade every confirmed signal above
+  the price floor.
+- **$1.00 minimum entry price** (added 2026-08-19, `MIN_ENTRY_PRICE`). Partitioning
+  the 560 pooled out-of-sample trades by entry price showed the edge is monotonic in
+  price and **unmeasurable at the bottom**:
+
+  | Entry price | n | win % | mean/trade | t-stat | 95% CI |
+  |---|---|---|---|---|---|
+  | <$1 | 29 | 69.0 | +5.88% | **0.46** | [−20.6%, +32.3%] |
+  | $1–5 | 110 | 63.1 | +8.10% | 3.09 | [+2.8%, +13.4%] |
+  | ≥$5 | 421 | 87.2 | +20.52% | 18.66 | [+18.4%, +22.7%] |
+
+  Sub-$1 is **not shown to lose money — it is shown to be unmeasured** (29 trades,
+  a 53-point confidence interval). But it is a bet on an unmeasured effect, and those
+  names cost ~5.9× their notional in margin versus 0.4× above $1, and 3× the borrow
+  (median 7.5%/yr vs 0.0%). 89% of the cumulative backtest return came from names
+  above $5.
+
+  **This matters more than it looks:** live signal flow is ~71% sub-$1 while the
+  backtest universe was only 7% sub-$1 (median entry $0.39 live vs $10.00 backtested).
+  The floor therefore removes most of current flow. That divergence rests on only 44
+  live observations and needs more data before it is treated as real.
 
 **Validated result** (walk-forward, out-of-sample, 958 historical events, corrected for
 the split-jump bug — see below): 560 trades, 81.4% win rate, t-stat +14.43,
 +918% over ~20 months at 100% exposure cap, only −3.5% max drawdown.
 
-**Realistic live target** (after 2% sizing instead of 5%, real spread costs, the
-shortability veto, and a 30%/yr borrow assumption): **+70% over ~20 months**, 83.6% win
-rate, −1.7% max drawdown. **This is the number to judge live performance against, not
-the +918%.** See `analysis/live_expectations.md`.
+**Realistic live target** — regenerated 2026-08-19 with the `$1.00` entry-price floor
+applied to the universe, so it models what the code actually trades (2% sizing, real
+spread costs, shortability veto, 30%/yr borrow): **+86% over ~20 months**, **87.0% win
+rate**, −1.8% max drawdown, from 276 taken trades. **This is the number to judge live
+performance against, not the +918%.** See `analysis/live_expectations.md`.
+
+_(Superseded: the pre-floor figure was +70% / 83.6% win. The floor raised both, because
+it removes the sub-$1 band where the strategy has no measured edge.)_
 
 ## The most important bug that was found and fixed
 
@@ -119,8 +144,17 @@ TRADE_PCT=0.02              # 2% of equity per trade (deliberately below the 5% 
 MAX_EXPOSURE=1.0            # 100% total exposure ceiling; NO cap on position count
 MAX_NEW_SHORTS_PER_DAY=8    # rate limiter on new entries/day, not a position cap
 MAX_DAILY_NOTIONAL=5000
-MAX_HTB_RATE=100            # skip if borrow cost exceeds 100%/yr
+MAX_HTB_RATE=100            # skip if borrow RATE exceeds 100%/yr
 MAX_SPREAD_PCT=0.05         # skip if bid-ask spread exceeds 5%
+MIN_ENTRY_PRICE=1.00        # no measured edge below this (t=0.46); also 5.9x margin
+MAX_TRADE_NOTIONAL=         # absolute $ ceiling per position; unset/0 = no cap
+MAX_BORROW_COST_PCT=0.05    # cap on EXPECTED borrow cost (rate x holding days/365)
+BORROW_ALERT_RATE=100       # text if an OPEN position's borrow reaches this
+BORROW_ALERT_MULTIPLE=3.0   # ...or triples from what it cost at entry
+MARGIN_EQUITY_PCT=0.5       # share of equity usable for short maintenance margin
+HOUSE_MARGIN_MULTIPLE=1.0   # Schwab charges exactly the FINRA floor ($2.50/share)
+ENTRY_WINDOW_BEFORE_MIN=15  # live halts outside 09:15-09:45 ET (exit code 4)
+ENTRY_WINDOW_AFTER_MIN=15
 ACCOUNT_SIZE=10000          # dry-run only; --live reads real Schwab equity
 SCHWAB_APP_KEY / SCHWAB_APP_SECRET   (or CLIENT_ID / CLIENT_SECRET, both accepted)
 SCHWAB_CALLBACK_URL=https://127.0.0.1:8182
@@ -155,9 +189,21 @@ GitHub repo secrets mirror the subset the CI/data-collection workflow needs (`MO
 
 1. **No real capital deployed yet.** Plan: watch dry-run for a while longer, then a
    single small manually-watched live trade before trusting it unattended.
-2. **Shortability proxy still needs calibration** — `DATA/shortability_ground_truth.csv`
-   is accumulating real Schwab data vs. the historical proxy's guesses; only a handful
-   of data points so far.
+   **Blocked as of 2026-08-19: the Schwab account is type `CASH`.** Short selling
+   requires margin; every entry would be rejected. A margin application was in flight.
+   Re-check with a read-only `get_account` call and confirm `type: MARGIN` before any
+   live run.
+2. ~~**Shortability proxy needs calibration**~~ — **answered 2026-08-19.** Schwab
+   reported **all 66** logged signals as shortable while the historical proxy called
+   40 of them unshortable. The proxy is wrong in the *pessimistic* direction, so the
+   real tradeable universe is wider than `live_expectations` assumed. The proxy should
+   be recalibrated upward rather than trusted as a veto.
+2b. **Margin is the binding constraint, not capital** (found 2026-08-19). FINRA
+   4210(c) floors a short's maintenance requirement at **$2.50/share below $5**, so a
+   cheap name eats margin out of all proportion to notional — 7.4× at $0.34, 112× at
+   $0.0224. Schwab charges exactly the FINRA floor (confirmed), so
+   `HOUSE_MARGIN_MULTIPLE=1.0`. `MAX_EXPOSURE` caps *notional* and never saw this.
+   See `src/split_strategy/margin.py`.
 3. **Survivorship bias unaddressed** — yfinance drops delisted tickers; a paid data
    source (e.g. Polygon) would fix this but was explicitly out of scope this round.
 4. ~~Two other repo-quality items in `docs/VALIDATION_REPORT.md`~~ — **fixed 2026-08-19.**
