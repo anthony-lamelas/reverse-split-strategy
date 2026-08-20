@@ -54,18 +54,29 @@ volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 #       SCHWAB_AUTH_SECRET=<random string guarding the auth endpoints>
 secrets = modal.Secret.from_name("split-strategy-secrets")
 
-image = (
+# `add_local_dir` must be the LAST step on an image: Modal mounts local files at
+# container start rather than baking them in, so a build step after one would force a
+# full rebuild on every source edit. Both images therefore branch from a common base
+# and add the source tree last.
+_base = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install_from_requirements("requirements-runtime.txt")
-    .add_local_dir("src", remote_path="/app/src")
-    .add_local_dir("scripts", remote_path="/app/scripts")
 )
 
-# The auth endpoints need FastAPI; the trading cron does not. Layering it in a second
-# image keeps the scheduled path lean - the whole point of requirements-runtime.txt -
-# while still satisfying @modal.fastapi_endpoint. Modal reuses the base layers, so
-# this costs one extra pip install, not a second full build.
-web_image = image.pip_install("fastapi[standard]")
+
+def _with_source(img):
+    return (img
+            .add_local_dir("src", remote_path="/app/src")
+            .add_local_dir("scripts", remote_path="/app/scripts"))
+
+
+image = _with_source(_base)
+
+# The auth endpoints need FastAPI; the trading cron does not. Keeping it on a separate
+# branch preserves the lean scheduled path - the whole point of
+# requirements-runtime.txt - while satisfying @modal.fastapi_endpoint. Modal reuses
+# the shared base layers, so this costs one pip install, not a second full build.
+web_image = _with_source(_base.pip_install("fastapi[standard]"))
 
 # Point the relocatable state at the Volume. config.py reads both from the
 # environment and defaults to the repo layout, so local runs are unaffected.
