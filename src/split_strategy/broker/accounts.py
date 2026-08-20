@@ -57,6 +57,37 @@ def get_account_equity(client, account_hash: str) -> Optional[float]:
         return None
 
 
+def get_available_funds(client, account_hash: str) -> Optional[float]:
+    """What can actually be deployed right now, or None if it cannot be read.
+
+    Deliberately NOT `liquidationValue`, which `get_account_equity` returns. The two
+    diverge badly, and the gap is not academic: in the window after margin approval
+    but before Schwab recognises held securities as collateral, an account can report
+    liquidationValue $4,921 alongside availableFunds $72 and maintenanceRequirement
+    $0. Sizing a margin budget off liquidationValue there overstates capacity ~34x,
+    and the system would place orders the broker simply refuses.
+
+    Position *sizing* may reasonably use equity; the margin *ceiling* must use this.
+    """
+    try:
+        resp = client.get_account(account_hash)
+        if resp.status_code >= 400:
+            return None
+        account = (resp.json() or {}).get("securitiesAccount", {})
+        for block in ("currentBalances", "projectedBalances"):
+            balances = account.get(block) or {}
+            for key in ("availableFunds", "buyingPower", "cashBalance"):
+                value = balances.get(key)
+                if value is not None:
+                    try:
+                        return float(value)
+                    except (TypeError, ValueError):
+                        continue
+        return None
+    except Exception:
+        return None
+
+
 def get_broker_positions(client, account_hash: str) -> Optional[dict[str, BrokerPosition]]:
     """Every position Schwab thinks we hold, keyed by uppercase ticker.
 

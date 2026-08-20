@@ -323,7 +323,19 @@ def _session(ctx: dict) -> int:
     # 4210(c) floors a short's requirement at $2.50/share below $5, so a cheap
     # name eats margin far out of proportion to its notional. Seed the manager
     # with what open positions already tie up, marked at current quotes.
+    # Cap the margin budget by what the broker will ACTUALLY let us deploy, not by
+    # account value. Those diverge: after margin approval but before Schwab counts
+    # held securities as collateral, liquidationValue can read $4,921 while
+    # availableFunds reads $72 - a 34x overstatement that would have this system
+    # confidently placing orders the broker refuses.
     margin_budget = equity * config.MARGIN_EQUITY_PCT
+    if mode is OrderMode.LIVE and client is not None:
+        from split_strategy.broker import accounts as acct
+        deployable = acct.get_available_funds(client, account_hash)
+        if deployable is not None and deployable < margin_budget:
+            print(f"Margin budget capped by broker availableFunds: "
+                  f"${deployable:,.0f} (equity-based would be ${margin_budget:,.0f})")
+            margin_budget = deployable
     margin_committed = mgn.portfolio_margin_requirement(
         ps.live_positions(positions), quotes, config.HOUSE_MARGIN_MULTIPLE)
     print(f"Margin ${margin_committed:,.0f} of ${margin_budget:,.0f} committed "
