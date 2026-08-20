@@ -15,12 +15,20 @@ browser login. There is no API path around it. So:
 
 - **Fully unattended trading is impossible on Schwab.** Anyone claiming otherwise is
   wrong about the API.
-- **GitHub Actions cannot trade.** A fresh checkout has no token and no position ledger.
-- **Trading must run from a machine that stays awake** and holds persistent state.
+- **GitHub Actions cannot trade.** A fresh checkout has no token and no position
+  ledger, and its cron fires 5-30+ min late - fatal for a +/-15 minute entry window.
+- **Trading needs a host that is always awake** and holds persistent state.
 
-What you actually sign up for: automated trading, plus a **~2 minute browser login once
-a week**. You will never approve individual trades. The bot texts you the day before
-the token expires.
+What you actually sign up for: automated trading, plus a **~90 second login once a week
+from your phone**. You never approve individual trades. The bot texts you a login link
+two days before the token expires.
+
+> **Why not a laptop.** This ran on Windows Task Scheduler and could not be trusted.
+> Two consecutive mornings — `WakeToRun=True`, `ACOnly=False`, wake timers enabled on
+> AC *and* DC, machine on AC, never powered off — the 09:25 task did not fire. Both
+> times it caught up the moment the lid was opened (11:57 the second day). Modern
+> Standby (`S0 Low Power Idle`) ignores scheduled-task wake timers. The entry-window
+> guard correctly refused to trade each time, which is safe but is not a trading system.
 
 ---
 
@@ -29,7 +37,8 @@ the token expires.
 | Job | Where | Trades? | Why |
 |---|---|---|---|
 | Scrapers, EDGAR enrichment, LLM scanner | GitHub Actions, 5am ET daily | No | Data collection only; no secrets beyond Mongo/OpenAI |
-| `run_trading.py` | **Your PC**, ~9:25am ET weekdays | Yes, when `--live --i-am-sure` | Needs the token + ledger |
+| `run_trading.py` | **Modal**, 09:25 America/New_York weekdays | Yes, when `--live --i-am-sure` | Needs the token + ledger, both on a Volume |
+| Trading watchdog | GitHub Actions, 15:00 UTC weekdays | No | Reports a missed run from off-host |
 | `pytest` | GitHub Actions, every push | No | Offline, no secrets |
 
 ---
@@ -51,45 +60,63 @@ You should see an equity line, a reconciliation summary, and any entries/exits m
 Browser opens → approve → token cached to `.schwab_token.json` (gitignored). Repeat
 weekly.
 
-### 3c. Schedule it (Windows Task Scheduler)
-Create a task that runs **weekdays at 9:25am ET**, ~5 minutes before the open:
+### 3c. Deploy to Modal
 
-- **Program:** `C:\Coding\reverse-split-strategy\venv\Scripts\python.exe`
-- **Arguments:** `scripts\run_trading.py` *(add `--live --i-am-sure` only when ready)*
-- **Start in:** `C:\Coding\reverse-split-strategy`
-- Check **"Run whether user is logged on or not"**
-- Check **"Wake the computer to run this task"**
-- Set the trigger to **repeat every 5 minutes for 25 minutes** (so 09:25–09:50)
+State lives on a Modal **Volume** at `/data`, so the existing file-based ledger and
+token code runs unchanged. `config.DATA_DIR` / `LOG_DIR` / `SCHWAB_TOKEN_PATH` are
+pointed there by env; locally they still default to the repo.
 
-Repeating matters: if the host wakes at 09:31 a single 09:25 trigger has already been
-missed, but a repeating one still trades near the open. Repeats are safe — one live
-position per ticker, and the ledger is flushed to disk *before* any order can reach the
-broker, so a crash mid-submit cannot produce a second short.
-
-```powershell
-# Re-register the repetition on an existing task
-$t = Get-ScheduledTask -TaskName "ReverseSplitDryRun"
-$t.Triggers[0].Repetition.Interval = "PT5M"
-$t.Triggers[0].Repetition.Duration = "PT25M"
-Set-ScheduledTask -TaskName "ReverseSplitDryRun" -Trigger $t.Triggers[0]
+```bash
+pip install modal
+modal setup
 ```
 
-> **The PC must be awake — and "Wake the computer" is not enough on its own.**
-> Wake timers are ignored on battery unless enabled, and are unreliable in Modern
-> Standby (`S0 Low Power Idle`) regardless of the setting. Verify with:
->
-> ```powershell
-> powercfg /query SCHEME_CURRENT SUB_SLEEP RTCWAKE   # 0x1 = enabled, per AC/DC
-> powercfg /waketimers                               # needs an ELEVATED prompt
-> ```
->
-> Do not rely on this alone. Two independent guards exist because it failed for weeks
-> undetected: the run refuses to trade outside the entry window (§4), and an
-> off-machine watchdog reports a missed session (§6).
+Create the secret (one blob holding everything `config.py` reads):
 
-Why 9:25am and not 5am: before the open there is no current quote. The old code took
-*yesterday's* open as "current price," so the gap-up filter compared the wrong days and
-position sizes were computed from a >24h-stale price.
+```bash
+modal secret create split-strategy-secrets SCHWAB_APP_KEY=... SCHWAB_APP_SECRET=... MONGODB_URI=... SMTP_HOST=... SMTP_PORT=587 SMTP_USER=... SMTP_PASSWORD=... ALERT_EMAIL_TO=... SEC_USER_AGENT="Your Name you@example.com" SCHWAB_AUTH_SECRET=$(openssl rand -hex 16)
+```
+
+Deploy, then seed the Volume with your current token and ledger:
+
+```bash
+modal deploy modal_app.py
+```
+
+```bash
+modal volume put split-strategy-data .schwab_token.json /.schwab_token.json
+```
+
+Deploying prints the URL for `auth_callback`. **Register that URL with your Schwab
+app** and set it as `SCHWAB_CALLBACK_URL` in the secret.
+
+> **`volume.commit()` is the one thing to not get wrong.** Modal Volume writes are not
+> durable across containers until committed. `modal_app.py` commits in a `finally`, so
+> it happens even on a halted or crashed run — the ledger may have been written *ahead*
+> of an order that did reach the broker. Without the commit the system silently forgets
+> its positions between runs, which is the worst available failure for a short book.
+
+Schedule and timezone are set in code — `modal.Cron("25 9 * * 1-5",
+timezone="America/New_York")` — so it tracks the 09:30 open through DST rather than
+drifting an hour in November.
+
+### 3d. Weekly re-login, from your phone
+
+The callback URL does not have to be localhost, so the whole OAuth flow happens in a
+phone browser. Two days before expiry the bot texts you a link:
+
+1. Tap it → redirected to Schwab
+2. Log in with 2FA on the phone
+3. Schwab redirects back to `auth_callback`, which verifies the CSRF `state`, exchanges
+   the code, writes the token to the Volume, and commits
+4. Page shows "Re-authenticated"
+
+No terminal, no CLI, no copy-paste. The `state` check is what stops anyone else's
+Schwab code from writing *their* token onto your Volume.
+
+**Fallback** if Schwab rejects a non-localhost callback: `modal shell` in and run
+`client_from_manual_flow`, which prints a URL you open anywhere and paste the redirect
+back to. Needs a computer; still one token owner.
 
 ---
 
@@ -105,7 +132,7 @@ position sizes were computed from a >24h-stale price.
 | **Exposure ceiling** | Total committed notional ≤ `MAX_EXPOSURE` × equity (default 100%). No position-count cap by design. |
 | **Rate limits** | `MAX_NEW_SHORTS_PER_DAY` (8) and `MAX_DAILY_NOTIONAL` ($5,000). |
 | **Cancel-before-cover** | On the exit date the resting take-profit is cancelled *first*. If the cancel fails, **no cover is sent** — filling both would flip you long. |
-| **Kill switch** | A file named `STOP` in the repo root halts everything, no code or config change. |
+| **Kill switch** | `STOP_TRADING=1`, or a `STOP` file in the repo root or `DATA_DIR`. Halts everything, no code change. |
 | **Uncertain submits** | A submit that times out is recorded `UNCERTAIN`, never written off — next run reconciles it. |
 | **Entry window** | In `--live`, a run firing outside 09:15–09:45 ET halts entirely (exit 4). Strategy B enters *at the open*; a run at 12:15 is not that trade. Dry-run continues but tags the report `OUT_OF_WINDOW`. |
 | **No-quote halt** | If there is work to do and no market data (usually an expired login), the run halts with exit 5 instead of skipping everything and reporting success. |
@@ -117,7 +144,7 @@ position sizes were computed from a >24h-stale price.
 | **Borrow cost** | Beyond the annualized `MAX_HTB_RATE` ceiling, caps *expected* cost (`rate × holding days / 365`) at `MAX_BORROW_COST_PCT`. A rate ceiling alone treats a 5-day and a 150-day hold identically. |
 | **Borrow drift** | Re-prices borrow on every open short each run and texts on a spike (past `BORROW_ALERT_RATE`, or `BORROW_ALERT_MULTIPLE`× entry). The entry veto fires once; a squeeze develops afterwards. |
 
-**Exit codes** (Task Scheduler records these as `LastTaskResult`):
+**Exit codes** (visible in `modal app logs`, and previously as Task Scheduler `LastTaskResult`):
 
 | Code | Meaning |
 |---|---|

@@ -1,0 +1,24 @@
+# Runtime dependencies for the LIVE TRADING path only (Modal image).
+#
+# Determined by importing scripts/run_trading.py's dependency graph and recording
+# what third-party modules actually load - not by guessing. The full
+# requirements.txt is ~20 packages; the trading path touches five, and pulling in
+# selenium/streamlit/matplotlib/scikit-learn/yfinance would triple the image build
+# for code that never executes there.
+#
+# Notably absent and deliberately so:
+#   selenium, webdriver-manager  - scrapers, which run in GitHub Actions
+#   yfinance                     - research only; live quotes come from Schwab
+#   streamlit, matplotlib, seaborn - the dashboard
+#   scikit-learn, scipy          - backtest/analysis
+#   openai                       - the LLM classifier, runs in the nightly job
+#   polygon-api-client           - never adopted; Polygon was out of scope
+#
+# schwab-py is imported lazily inside broker/schwab_auth.py, so it does not appear
+# in an import trace - it is still required at runtime.
+
+pandas>=2.0.0
+numpy>=1.24.0
+pymongo>=4.6.0
+python-dotenv>=1.0.0
+schwab-py>=1.5.0
