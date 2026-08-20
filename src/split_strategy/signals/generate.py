@@ -75,7 +75,17 @@ def _price_snapshot(ticker: str):
     """
     try:
         import yfinance as yf
+    except ImportError as e:
+        # Deliberately NOT swallowed with the data errors below. A missing package
+        # made every signal priceless on a trimmed deployment image, and each entry
+        # was skipped as "missing or invalid price" - indistinguishable from a
+        # genuine data gap, and silent for a whole session.
+        raise RuntimeError(
+            "yfinance is not installed, so live prices cannot be fetched. This is a "
+            "deployment problem, not a data problem - check requirements-runtime.txt."
+        ) from e
 
+    try:
         hist = yf.Ticker(ticker).history(period="7d", auto_adjust=False)
         if hist is None or hist.empty or len(hist) < 2:
             return None, None

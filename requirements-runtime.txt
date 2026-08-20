@@ -8,17 +8,20 @@
 #
 # Notably absent and deliberately so:
 #   selenium, webdriver-manager  - scrapers, which run in GitHub Actions
-#   yfinance                     - research only; live quotes come from Schwab
 #   streamlit, matplotlib, seaborn - the dashboard
 #   scikit-learn, scipy          - backtest/analysis
 #   openai                       - the LLM classifier, runs in the nightly job
 #   polygon-api-client           - never adopted; Polygon was out of scope
 #
-# schwab-py is imported lazily inside broker/schwab_auth.py, so it does not appear
-# in an import trace - it is still required at runtime.
+# schwab-py and yfinance are imported LAZILY (inside functions), so they do not
+# appear in an import trace of the module graph - both are required at runtime.
+# yfinance in particular: signals/generate.py::_price_snapshot uses it for the
+# current price that drives sizing and the price floor. Without it every signal
+# comes back priceless and every entry is silently skipped.
 
 pandas>=2.0.0
 numpy>=1.24.0
 pymongo>=4.6.0
 python-dotenv>=1.0.0
 schwab-py>=1.5.0
+yfinance>=0.2.40
