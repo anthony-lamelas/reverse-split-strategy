@@ -155,14 +155,23 @@ def auth_start(k: str = ""):
     """Begin the OAuth flow and redirect the caller to Schwab."""
     from fastapi.responses import JSONResponse, RedirectResponse
 
-    if not k or k != os.environ.get("SCHWAB_AUTH_SECRET"):
+    expected = os.environ.get("SCHWAB_AUTH_SECRET")
+    if not expected:
+        # Distinguish "not set up" from "wrong key". Comparing against an unset
+        # value would 401 every request and look like a bad secret for hours.
+        return JSONResponse(
+            {"error": "SCHWAB_AUTH_SECRET is not set in the Modal secret; "
+                      "phone login is not configured yet"}, status_code=503)
+    if not k or k != expected:
         return JSONResponse({"error": "unauthorized"}, status_code=401)
 
     sys.path.insert(0, "/app/src")
     from schwab.auth import get_auth_context
 
-    ctx = get_auth_context(os.environ["SCHWAB_APP_KEY"],
-                           os.environ["SCHWAB_CALLBACK_URL"])
+    # Falls back to config's default rather than KeyError-ing: SCHWAB_CALLBACK_URL
+    # is optional in .env, so it may legitimately be absent from the secret.
+    callback = os.environ.get("SCHWAB_CALLBACK_URL") or "https://127.0.0.1:8182"
+    ctx = get_auth_context(os.environ["SCHWAB_APP_KEY"], callback)
     # The callback runs in a different container, so the state has to be shared.
     # Mongo rather than the Volume: no reload/commit semantics to get wrong for a
     # value that lives for ninety seconds.
