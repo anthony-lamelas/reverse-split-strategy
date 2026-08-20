@@ -61,6 +61,12 @@ image = (
     .add_local_dir("scripts", remote_path="/app/scripts")
 )
 
+# The auth endpoints need FastAPI; the trading cron does not. Layering it in a second
+# image keeps the scheduled path lean - the whole point of requirements-runtime.txt -
+# while still satisfying @modal.fastapi_endpoint. Modal reuses the base layers, so
+# this costs one extra pip install, not a second full build.
+web_image = image.pip_install("fastapi[standard]")
+
 # Point the relocatable state at the Volume. config.py reads both from the
 # environment and defaults to the repo layout, so local runs are unaffected.
 ENV = {
@@ -132,7 +138,7 @@ def _auth_collection():
     return get_collection("auth_flows")
 
 
-@app.function(image=image, volumes={DATA_DIR: volume}, secrets=[secrets])
+@app.function(image=web_image, volumes={DATA_DIR: volume}, secrets=[secrets])
 @modal.fastapi_endpoint(method="GET")
 def auth_start(k: str = ""):
     """Begin the OAuth flow and redirect the caller to Schwab."""
@@ -158,7 +164,7 @@ def auth_start(k: str = ""):
     return RedirectResponse(ctx.authorization_url, status_code=302)
 
 
-@app.function(image=image, volumes={DATA_DIR: volume}, secrets=[secrets])
+@app.function(image=web_image, volumes={DATA_DIR: volume}, secrets=[secrets])
 @modal.fastapi_endpoint(method="GET")
 def auth_callback(request):
     """Complete the flow: verify state, exchange the code, write the token."""
