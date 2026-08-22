@@ -114,10 +114,21 @@ def _run_session(extra_args: list[str] | None = None) -> int:
                 # retry policy, decides whether a late run may trade.
 )
 def trade() -> int:
-    """The scheduled session. Dry-run until `--live --i-am-sure` is added here."""
+    """The scheduled session. LIVE - this places real orders.
+
+    Guarded, in the order they are evaluated: STOP kill switch / STOP_TRADING, the
+    trading-day check, the 09:15-09:45 entry window (halts rather than trading late),
+    ledger/broker reconciliation, the $1 price floor, the margin budget capped by
+    broker availableFunds, borrow rate and expected borrow cost, spread width,
+    shortability, and MAX_NEW_SHORTS_PER_DAY / MAX_DAILY_NOTIONAL /
+    MAX_TRADE_NOTIONAL from the Modal secret ($50 and 1/day as configured).
+
+    To revert to dry-run: drop the flags below and redeploy. To stop immediately
+    without a deploy: set STOP_TRADING=1 in the Modal secret.
+    """
     os.makedirs(f"{DATA_DIR}/logs", exist_ok=True)
     try:
-        return _run_session()
+        return _run_session(["--live", "--i-am-sure"])
     finally:
         # Always commit, including on a halted or crashed run: the ledger may have
         # been written ahead of an order that did reach the broker.
