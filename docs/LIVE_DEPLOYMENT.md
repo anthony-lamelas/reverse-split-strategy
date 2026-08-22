@@ -156,12 +156,31 @@ back to. Needs a computer; still one token owner.
 | 5 | No live quotes — nothing could be entered or covered |
 
 ### Emergency stop
+
+One command. Halts the next scheduled run before it does anything.
+
 ```bash
-cd C:\Coding\reverse-split-strategy
-echo stop > STOP
+python scripts/emergency_stop.py
 ```
-Next run halts immediately. Delete the file to resume. **This does not close existing
-positions** — do that in the Schwab UI if you need out now.
+
+```bash
+python scripts/emergency_stop.py --status    # HALTED or ACTIVE
+python scripts/emergency_stop.py --resume    # allow trading again
+```
+
+It writes a `STOP` marker to the Modal Volume, which `check_kill_switch()` tests
+before anything else in the session. Deliberately not the `STOP_TRADING=1` secret
+route: that requires rebuilding the secret from `.env`, re-uploading every
+credential — a poor thing to be doing in a hurry, at exactly the moment you want one
+reliable action.
+
+Verified end to end: with STOP in place a live run reports
+`HALTED: STOP file present at /data/STOP` and exits 3, placing no orders.
+
+**This stops the bot, it does NOT close positions.** Anything already short stays
+short. Resting take-profit orders remain live at the broker, but the time-based cover
+will not be submitted while halted — so if a position is near its exit date, cover it
+yourself in the Schwab UI.
 
 ---
 
