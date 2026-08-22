@@ -150,40 +150,58 @@ def _auth_collection():
 
 
 @app.function(image=web_image, volumes={DATA_DIR: volume}, secrets=[secrets])
-@modal.fastapi_endpoint(method="GET")
-def auth_start(k: str = ""):
-    """Begin the OAuth flow and redirect the caller to Schwab."""
+@modal.asgi_app()
+def auth_start():
+    """Begin the OAuth flow and redirect the caller to Schwab.
+
+    An ASGI app rather than a plain endpoint so the secret can live in the PATH:
+    `/<secret>`. It cannot be a `?k=` query string, because SMS link detection
+    stops at the `?` - the texted link then arrives without the key and the
+    endpoint answers a bare "unauthorized" with nothing to explain why.
+
+    The secret is load-bearing, not decoration. The `state` check on /auth/callback
+    only proves the state came from here; it does NOT stop a stranger who triggers
+    this endpoint themselves, completes the flow with their OWN Schwab credentials,
+    and lands their token on our Volume - after which this system trades their
+    account. Requiring the secret to *start* a flow is what prevents that.
+    """
+    from fastapi import FastAPI
     from fastapi.responses import JSONResponse, RedirectResponse
 
-    expected = os.environ.get("SCHWAB_AUTH_SECRET")
-    if not expected:
-        # Distinguish "not set up" from "wrong key". Comparing against an unset
-        # value would 401 every request and look like a bad secret for hours.
-        return JSONResponse(
-            {"error": "SCHWAB_AUTH_SECRET is not set in the Modal secret; "
-                      "phone login is not configured yet"}, status_code=503)
-    if not k or k != expected:
-        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    web = FastAPI()
 
-    sys.path.insert(0, "/app/src")
-    from schwab.auth import get_auth_context
-    from split_strategy import config
+    @web.get("/{secret}")
+    def start(secret: str):
+        expected = os.environ.get("SCHWAB_AUTH_SECRET")
+        if not expected:
+            # Distinguish "not set up" from "wrong key". Comparing against an unset
+            # value would 401 every request and look like a bad secret for hours.
+            return JSONResponse(
+                {"error": "SCHWAB_AUTH_SECRET is not set in the Modal secret; "
+                          "phone login is not configured yet"}, status_code=503)
+        if secret != expected:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
 
-    # Read credentials through config, never straight from os.environ: config accepts
-    # BOTH spellings (SCHWAB_APP_KEY or the portal's CLIENT_ID), and reaching past it
-    # meant a KeyError for anyone whose .env uses the latter - which this one does.
-    callback = config.SCHWAB_CALLBACK_URL
-    ctx = get_auth_context(config.SCHWAB_APP_KEY, callback)
-    # The callback runs in a different container, so the state has to be shared.
-    # Mongo rather than the Volume: no reload/commit semantics to get wrong for a
-    # value that lives for ninety seconds.
-    import datetime as dt
-    _auth_collection().insert_one({
-        "state": ctx.state,
-        "callback_url": ctx.callback_url,
-        "created_at": dt.datetime.now(dt.timezone.utc),
-    })
-    return RedirectResponse(ctx.authorization_url, status_code=302)
+        sys.path.insert(0, "/app/src")
+        from schwab.auth import get_auth_context
+        from split_strategy import config
+
+        # Read credentials through config, never straight from os.environ: config
+        # accepts BOTH spellings (SCHWAB_APP_KEY or the portal's CLIENT_ID), and
+        # reaching past it KeyError'd for a .env using the latter - as this one does.
+        ctx = get_auth_context(config.SCHWAB_APP_KEY, config.SCHWAB_CALLBACK_URL)
+        # The callback runs in a different container, so the state has to be shared.
+        # Mongo rather than the Volume: no reload/commit semantics to get wrong for
+        # a value that lives for ninety seconds.
+        import datetime as dt
+        _auth_collection().insert_one({
+            "state": ctx.state,
+            "callback_url": ctx.callback_url,
+            "created_at": dt.datetime.now(dt.timezone.utc),
+        })
+        return RedirectResponse(ctx.authorization_url, status_code=302)
+
+    return web
 
 
 @app.function(image=web_image, volumes={DATA_DIR: volume}, secrets=[secrets])
