@@ -147,13 +147,18 @@ def warn_if_token_expiring(quiet: bool = False) -> None:
     if age is None:
         return
     days_left = REFRESH_TOKEN_DAYS - age
+    # The instructions differ by host: on Modal there is no browser, so the token is
+    # minted locally and pushed to the Volume. Telling a cloud operator to "run
+    # --login" sends them somewhere that cannot work.
+    on_volume = str(config.SCHWAB_TOKEN_PATH).startswith("/data")
+    how = ("login local + modal volume put" if on_volume else "run_trading.py --login")
     if 0 < days_left <= 2:
-        msg = f"Schwab login expires in ~{days_left:.1f}d. Run: run_trading.py --login"
+        msg = f"Schwab login expires in ~{days_left:.1f}d. {how}"
         print(f"[token] {msg}")
         if not quiet:
             send_text("SplitShort: re-auth needed", msg)
     elif days_left <= 0:
-        msg = "Schwab login EXPIRED. Trading paused until you run --login"
+        msg = f"Schwab login EXPIRED. Trading paused until re-auth ({how})"
         print(f"[token] {msg}")
         if not quiet:
             send_text("SplitShort: login expired", msg)
