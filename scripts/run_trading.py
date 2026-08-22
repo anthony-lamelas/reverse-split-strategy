@@ -147,11 +147,13 @@ def warn_if_token_expiring(quiet: bool = False) -> None:
     if age is None:
         return
     days_left = REFRESH_TOKEN_DAYS - age
-    # The instructions differ by host: on Modal there is no browser, so the token is
-    # minted locally and pushed to the Volume. Telling a cloud operator to "run
-    # --login" sends them somewhere that cannot work.
+    # Never put a URL in these: Verizon's vtext.com gateway silently drops texts
+    # containing links (verified - a plain message arrived, the same message with a
+    # URL did not). The re-auth link is a STATIC bookmark that mints a fresh CSRF
+    # state on every visit, so the alert only has to say "go tap it".
     on_volume = str(config.SCHWAB_TOKEN_PATH).startswith("/data")
-    how = ("login local + modal volume put" if on_volume else "run_trading.py --login")
+    how = ("open your Schwab re-auth bookmark" if on_volume
+           else "run_trading.py --login")
     if 0 < days_left <= 2:
         msg = f"Schwab login expires in ~{days_left:.1f}d. {how}"
         print(f"[token] {msg}")
