@@ -167,11 +167,13 @@ def auth_start(k: str = ""):
 
     sys.path.insert(0, "/app/src")
     from schwab.auth import get_auth_context
+    from split_strategy import config
 
-    # Falls back to config's default rather than KeyError-ing: SCHWAB_CALLBACK_URL
-    # is optional in .env, so it may legitimately be absent from the secret.
-    callback = os.environ.get("SCHWAB_CALLBACK_URL") or "https://127.0.0.1:8182"
-    ctx = get_auth_context(os.environ["SCHWAB_APP_KEY"], callback)
+    # Read credentials through config, never straight from os.environ: config accepts
+    # BOTH spellings (SCHWAB_APP_KEY or the portal's CLIENT_ID), and reaching past it
+    # meant a KeyError for anyone whose .env uses the latter - which this one does.
+    callback = config.SCHWAB_CALLBACK_URL
+    ctx = get_auth_context(config.SCHWAB_APP_KEY, callback)
     # The callback runs in a different container, so the state has to be shared.
     # Mongo rather than the Volume: no reload/commit semantics to get wrong for a
     # value that lives for ninety seconds.
@@ -213,8 +215,9 @@ def auth_callback(request):
     ctx = AuthContext(callback_url=flow["callback_url"],
                       authorization_url=None, state=flow["state"])
     try:
+        from split_strategy import config
         client_from_received_url(
-            os.environ["SCHWAB_APP_KEY"], os.environ["SCHWAB_APP_SECRET"],
+            config.SCHWAB_APP_KEY, config.SCHWAB_APP_SECRET,
             ctx, received_url, write_token,
         )
     except Exception as e:
