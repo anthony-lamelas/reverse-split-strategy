@@ -189,7 +189,7 @@ def auth_start():
         # Read credentials through config, never straight from os.environ: config
         # accepts BOTH spellings (SCHWAB_APP_KEY or the portal's CLIENT_ID), and
         # reaching past it KeyError'd for a .env using the latter - as this one does.
-        ctx = get_auth_context(config.SCHWAB_APP_KEY, config.SCHWAB_CALLBACK_URL)
+        ctx = get_auth_context(config.SCHWAB_APP_KEY, config.SCHWAB_WEB_CALLBACK_URL)
         # The callback runs in a different container, so the state has to be shared.
         # Mongo rather than the Volume: no reload/commit semantics to get wrong for
         # a value that lives for ninety seconds.
