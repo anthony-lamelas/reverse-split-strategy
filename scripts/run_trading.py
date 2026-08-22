@@ -122,10 +122,19 @@ def do_login() -> int:
     from split_strategy.broker.schwab_auth import SchwabAuthError, get_client
 
     try:
-        client = get_client(interactive=True)
+        # force=True: asking to log in must actually log in. Without it a still-valid
+        # token short-circuits the flow and returns silently, so the 7-day clock never
+        # restarts - proactive renewal was impossible and the expiry warning told you
+        # to do something that did nothing.
+        client = get_client(interactive=True, force=True)
         resp = client.get_account_numbers()
+        from split_strategy.broker.schwab_auth import token_age_days
+        age = token_age_days()
         print(f"Login OK. Token cached at {config.SCHWAB_TOKEN_PATH}. "
               f"Account call: HTTP {resp.status_code}")
+        if age is not None and age > 0.05:
+            print(f"WARNING: token still reports an age of {age:.1f} days - the login "
+                  f"flow may not have minted a new token.")
         print("Schwab refresh tokens last ~7 days; re-run --login weekly.")
         return 0 if resp.status_code < 400 else 1
     except SchwabAuthError as e:

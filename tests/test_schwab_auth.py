@@ -167,3 +167,39 @@ def test_expiry_warning_window_is_reachable(tmp_path):
     days_left = schwab_auth.REFRESH_TOKEN_DAYS - schwab_auth.token_age_days(token)
 
     assert 0 < days_left <= 2
+
+
+def test_force_skips_a_valid_cached_token_and_logs_in(monkeypatch, keys_configured, token_file):
+    """`--login` must actually log in.
+
+    A still-valid token used to short-circuit the cached branch and return without
+    logging in, so the 7-day refresh clock never restarted. Proactive renewal was
+    impossible: the two-day expiry warning told you to re-authenticate, and doing so
+    silently changed nothing until the token had already expired.
+    """
+    monkeypatch.setattr(schwab_auth.config, "SCHWAB_TOKEN_PATH", str(token_file))
+    cached_client, fresh_client = MagicMock(), MagicMock()
+    from_token_file = MagicMock(return_value=cached_client)
+    login_flow = MagicMock(return_value=fresh_client)
+    _patch_schwab_auth_module(monkeypatch, from_token_file=from_token_file,
+                              from_login_flow=login_flow)
+
+    result = schwab_auth.get_client(interactive=True, force=True)
+
+    assert result is fresh_client
+    login_flow.assert_called_once()
+    from_token_file.assert_not_called()
+
+
+def test_without_force_a_valid_cached_token_is_reused(monkeypatch, keys_configured, token_file):
+    """The default must not change: cron runs reuse the cached token, never prompt."""
+    monkeypatch.setattr(schwab_auth.config, "SCHWAB_TOKEN_PATH", str(token_file))
+    cached_client = MagicMock()
+    login_flow = MagicMock()
+    _patch_schwab_auth_module(monkeypatch, from_token_file=lambda **kw: cached_client,
+                              from_login_flow=login_flow)
+
+    result = schwab_auth.get_client(interactive=True, force=False)
+
+    assert result is cached_client
+    login_flow.assert_not_called()

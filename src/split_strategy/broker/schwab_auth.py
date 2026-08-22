@@ -35,13 +35,20 @@ def _require_keys():
         )
 
 
-def get_client(interactive: bool = False):
+def get_client(interactive: bool = False, force: bool = False):
     """Return an authenticated schwab-py client.
 
     Args:
         interactive: if True and no valid token exists, run the browser login flow to
             mint a fresh token (needed roughly weekly). If False (e.g. in CI/cron) and
             the token is missing/expired, raise SchwabAuthError.
+        force: skip the cached token entirely and always run the login flow.
+
+    `force` exists because a still-valid token short-circuits the cached branch below
+    and returns without logging in - so `--login` was a silent no-op until the token
+    had ALREADY expired. That made proactive renewal impossible and rendered the
+    two-day expiry warning useless: it told you to re-authenticate, and doing so
+    changed nothing. The 7-day clock only restarts on a real interactive login.
     """
     _require_keys()
     try:
@@ -53,7 +60,7 @@ def get_client(interactive: bool = False):
 
     token_path = Path(config.SCHWAB_TOKEN_PATH)
 
-    if token_path.exists():
+    if token_path.exists() and not force:
         try:
             client = client_from_token_file(
                 token_path=str(token_path),
