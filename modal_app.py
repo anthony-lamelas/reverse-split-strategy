@@ -22,10 +22,15 @@ Design notes
   5 = no quotes, ...) survive exactly as they do on the laptop.
 - The GitHub Actions watchdog needs no change: it reads the MongoDB heartbeat and
   never knew which host produced it.
+- **No web endpoints.** Server-side OAuth was built and removed: schwab-py refuses
+  any callback whose hostname is not 127.0.0.1, and Schwab enforced the same - after
+  authenticating against a public callback it returned to the login screen and never
+  called the endpoint, across nine attempts. Re-auth is a local browser login plus
+  `modal volume put`, once a week.
 
 Usage
 -----
-    modal deploy modal_app.py             # deploy the cron + auth endpoints
+    modal deploy modal_app.py             # deploy the scheduled trading run
     modal run modal_app.py::trade_once    # run once, off-schedule (expect exit 4)
     modal volume ls split-strategy-data   # inspect persisted state
 """
@@ -50,14 +55,12 @@ volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 #       SCHWAB_APP_KEY=... SCHWAB_APP_SECRET=... MONGODB_URI=... \
 #       SMTP_HOST=... SMTP_PORT=587 SMTP_USER=... SMTP_PASSWORD=... \
 #       ALERT_EMAIL_TO=... SEC_USER_AGENT="Name email@example.com" \
-#       SCHWAB_CALLBACK_URL=<the deployed auth_callback URL> \
-#       SCHWAB_AUTH_SECRET=<random string guarding the auth endpoints>
+#       SCHWAB_CALLBACK_URL=https://127.0.0.1:8182
 secrets = modal.Secret.from_name("split-strategy-secrets")
 
 # `add_local_dir` must be the LAST step on an image: Modal mounts local files at
-# container start rather than baking them in, so a build step after one would force a
-# full rebuild on every source edit. Both images therefore branch from a common base
-# and add the source tree last.
+# container start rather than baking them in, so a build step afterwards forces a full
+# rebuild on every source edit.
 _base = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install_from_requirements("requirements-runtime.txt")
@@ -71,12 +74,6 @@ def _with_source(img):
 
 
 image = _with_source(_base)
-
-# The auth endpoints need FastAPI; the trading cron does not. Keeping it on a separate
-# branch preserves the lean scheduled path - the whole point of
-# requirements-runtime.txt - while satisfying @modal.fastapi_endpoint. Modal reuses
-# the shared base layers, so this costs one pip install, not a second full build.
-web_image = _with_source(_base.pip_install("fastapi[standard]"))
 
 # Point the relocatable state at the Volume. config.py reads both from the
 # environment and defaults to the repo layout, so local runs are unaffected.
@@ -124,7 +121,7 @@ def trade() -> int:
     MAX_TRADE_NOTIONAL from the Modal secret ($50 and 1/day as configured).
 
     To revert to dry-run: drop the flags below and redeploy. To stop immediately
-    without a deploy: set STOP_TRADING=1 in the Modal secret.
+    without a deploy: `python scripts/emergency_stop.py`.
     """
     os.makedirs(f"{DATA_DIR}/logs", exist_ok=True)
     try:
@@ -144,116 +141,3 @@ def trade_once(live: bool = False) -> int:
         return _run_session(["--live", "--i-am-sure"] if live else [])
     finally:
         volume.commit()
-
-
-# ---------------------------------------------------------------------------------
-# Weekly re-auth, entirely from a phone
-# ---------------------------------------------------------------------------------
-# Schwab refresh tokens expire every 7 days and renewal needs an interactive login.
-# The callback URL does NOT have to be localhost, so pointing it at these endpoints
-# means the whole flow happens in a phone browser: the expiry alert texts a link, you
-# tap it, log in, and the token lands on the Volume. No terminal, no pasting.
-
-def _auth_collection():
-    sys.path.insert(0, "/app/src")
-    from split_strategy.database import get_collection
-    return get_collection("auth_flows")
-
-
-@app.function(image=web_image, volumes={DATA_DIR: volume}, secrets=[secrets])
-@modal.asgi_app()
-def auth_start():
-    """Begin the OAuth flow and redirect the caller to Schwab.
-
-    An ASGI app rather than a plain endpoint so the secret can live in the PATH:
-    `/<secret>`. It cannot be a `?k=` query string, because SMS link detection
-    stops at the `?` - the texted link then arrives without the key and the
-    endpoint answers a bare "unauthorized" with nothing to explain why.
-
-    The secret is load-bearing, not decoration. The `state` check on /auth/callback
-    only proves the state came from here; it does NOT stop a stranger who triggers
-    this endpoint themselves, completes the flow with their OWN Schwab credentials,
-    and lands their token on our Volume - after which this system trades their
-    account. Requiring the secret to *start* a flow is what prevents that.
-    """
-    from fastapi import FastAPI
-    from fastapi.responses import JSONResponse, RedirectResponse
-
-    web = FastAPI()
-
-    @web.get("/{secret}")
-    def start(secret: str):
-        expected = os.environ.get("SCHWAB_AUTH_SECRET")
-        if not expected:
-            # Distinguish "not set up" from "wrong key". Comparing against an unset
-            # value would 401 every request and look like a bad secret for hours.
-            return JSONResponse(
-                {"error": "SCHWAB_AUTH_SECRET is not set in the Modal secret; "
-                          "phone login is not configured yet"}, status_code=503)
-        if secret != expected:
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-
-        sys.path.insert(0, "/app/src")
-        from schwab.auth import get_auth_context
-        from split_strategy import config
-
-        # Read credentials through config, never straight from os.environ: config
-        # accepts BOTH spellings (SCHWAB_APP_KEY or the portal's CLIENT_ID), and
-        # reaching past it KeyError'd for a .env using the latter - as this one does.
-        ctx = get_auth_context(config.SCHWAB_APP_KEY, config.SCHWAB_WEB_CALLBACK_URL)
-        # The callback runs in a different container, so the state has to be shared.
-        # Mongo rather than the Volume: no reload/commit semantics to get wrong for
-        # a value that lives for ninety seconds.
-        import datetime as dt
-        _auth_collection().insert_one({
-            "state": ctx.state,
-            "callback_url": ctx.callback_url,
-            "created_at": dt.datetime.now(dt.timezone.utc),
-        })
-        return RedirectResponse(ctx.authorization_url, status_code=302)
-
-    return web
-
-
-@app.function(image=web_image, volumes={DATA_DIR: volume}, secrets=[secrets])
-@modal.fastapi_endpoint(method="GET")
-def auth_callback(request):
-    """Complete the flow: verify state, exchange the code, write the token."""
-    from fastapi.responses import HTMLResponse
-
-    sys.path.insert(0, "/app/src")
-    import json
-    from schwab.auth import AuthContext, client_from_received_url
-
-    received_url = str(request.url)
-    state = request.query_params.get("state")
-
-    # Without this check, anyone who hits this endpoint with THEIR Schwab code
-    # writes THEIR token onto our Volume, and the next run trades their account.
-    flow = _auth_collection().find_one_and_delete({"state": state}) if state else None
-    if not flow:
-        return HTMLResponse("<h1>Rejected</h1><p>Unknown or expired auth state.</p>",
-                            status_code=400)
-
-    token_path = ENV["SCHWAB_TOKEN_PATH"]
-
-    def write_token(token, *args, **kwargs):
-        with open(token_path, "w", encoding="utf-8") as fh:
-            json.dump(token, fh)
-
-    ctx = AuthContext(callback_url=flow["callback_url"],
-                      authorization_url=None, state=flow["state"])
-    try:
-        from split_strategy import config
-        client_from_received_url(
-            config.SCHWAB_APP_KEY, config.SCHWAB_APP_SECRET,
-            ctx, received_url, write_token,
-        )
-    except Exception as e:
-        return HTMLResponse(f"<h1>Failed</h1><pre>{str(e)[:400]}</pre>", status_code=400)
-
-    volume.commit()
-    return HTMLResponse(
-        "<h1>Re-authenticated</h1>"
-        "<p>Schwab token refreshed and saved. Good for 7 days.</p>"
-    )

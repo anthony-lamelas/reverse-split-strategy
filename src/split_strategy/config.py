@@ -74,18 +74,14 @@ HEADERS = {
 # docs) or the portal's own CLIENT_ID/CLIENT_SECRET wording.
 SCHWAB_APP_KEY = os.environ.get("SCHWAB_APP_KEY") or os.environ.get("CLIENT_ID")
 SCHWAB_APP_SECRET = os.environ.get("SCHWAB_APP_SECRET") or os.environ.get("CLIENT_SECRET")
-# Must exactly match the callback registered on the app; 127.0.0.1 loopback is typical.
+# Must exactly match the callback registered on the app, and MUST be a 127.0.0.1
+# loopback: schwab-py's client_from_login_flow rejects any other hostname outright.
+# Pointing this at a public URL silently breaks the only working re-auth path.
 SCHWAB_CALLBACK_URL = (
     os.environ.get("SCHWAB_CALLBACK_URL")
     or os.environ.get("CALLBACK_URL")
     or "https://127.0.0.1:8182"
 )
-# Server-side OAuth callback used by the Modal endpoints. Kept SEPARATE from
-# SCHWAB_CALLBACK_URL because schwab-py's client_from_login_flow REFUSES any hostname
-# other than 127.0.0.1 - pointing the single setting at a public URL silently broke
-# local login, which was the only working re-auth path.
-SCHWAB_WEB_CALLBACK_URL = os.environ.get("SCHWAB_WEB_CALLBACK_URL") or SCHWAB_CALLBACK_URL
-
 # Where the OAuth token (access + 7-day refresh) is cached between runs.
 SCHWAB_TOKEN_PATH = os.environ.get("SCHWAB_TOKEN_PATH", str(ROOT_DIR / ".schwab_token.json"))
 # Optional: restrict trading to a specific account hash (else the first account is used).

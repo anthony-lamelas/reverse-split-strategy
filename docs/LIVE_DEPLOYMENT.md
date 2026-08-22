@@ -80,7 +80,7 @@ modal setup
 Create the secret (one blob holding everything `config.py` reads):
 
 ```bash
-modal secret create split-strategy-secrets SCHWAB_APP_KEY=... SCHWAB_APP_SECRET=... MONGODB_URI=... SMTP_HOST=... SMTP_PORT=587 SMTP_USER=... SMTP_PASSWORD=... ALERT_EMAIL_TO=... SEC_USER_AGENT="Your Name you@example.com" SCHWAB_AUTH_SECRET=$(openssl rand -hex 16)
+modal secret create split-strategy-secrets SCHWAB_APP_KEY=... SCHWAB_APP_SECRET=... MONGODB_URI=... SMTP_HOST=... SMTP_PORT=587 SMTP_USER=... SMTP_PASSWORD=... ALERT_EMAIL_TO=... SEC_USER_AGENT="Your Name you@example.com"
 ```
 
 Deploy, then seed the Volume with your current token and ledger:
@@ -92,9 +92,6 @@ modal deploy modal_app.py
 ```bash
 modal volume put split-strategy-data .schwab_token.json /.schwab_token.json
 ```
-
-Deploying prints the URL for `auth_callback`. **Register that URL with your Schwab
-app** and set it as `SCHWAB_CALLBACK_URL` in the secret.
 
 > **`volume.commit()` is the one thing to not get wrong.** Modal Volume writes are not
 > durable across containers until committed. `modal_app.py` commits in a `finally`, so
@@ -111,7 +108,8 @@ drifting an hour in November.
 Two commands, at a desk, once a week. The bot texts you two days before expiry.
 
 ```bash
-.env\Scripts\python.exe scriptsun_trading.py --login
+.env\Scripts\python.exe scripts
+un_trading.py --login
 ```
 
 ```bash
@@ -131,7 +129,7 @@ python scripts/check_account.py
 
 **Do not** point `SCHWAB_CALLBACK_URL` at anything other than `https://127.0.0.1:8182`.
 schwab-py rejects non-loopback hostnames outright, and doing so breaks the only
-working re-auth path. The Modal endpoint URL lives in `SCHWAB_WEB_CALLBACK_URL`.
+working re-auth path.
 
 ---
 
