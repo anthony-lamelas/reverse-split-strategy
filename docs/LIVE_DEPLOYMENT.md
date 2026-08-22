@@ -19,9 +19,15 @@ browser login. There is no API path around it. So:
   ledger, and its cron fires 5-30+ min late - fatal for a +/-15 minute entry window.
 - **Trading needs a host that is always awake** and holds persistent state.
 
-What you actually sign up for: automated trading, plus a **~90 second login once a week
-from your phone**. You never approve individual trades. The bot texts you a login link
-two days before the token expires.
+What you actually sign up for: automated trading, plus a **~2 minute browser login
+once a week at a desk**. You never approve individual trades. The bot texts you two
+days before the token expires.
+
+> **Phone-only re-auth was attempted and does not work on Schwab.** schwab-py refuses
+> any callback whose hostname is not `127.0.0.1`, and Schwab appears to enforce the
+> same server-side: after authenticating against a public callback it returned to the
+> login screen and never called the endpoint. The Modal auth endpoints remain deployed
+> and idle in case that changes.
 
 > **Why not a laptop.** This ran on Windows Task Scheduler and could not be trusted.
 > Two consecutive mornings — `WakeToRun=True`, `ACOnly=False`, wake timers enabled on
@@ -100,23 +106,32 @@ Schedule and timezone are set in code — `modal.Cron("25 9 * * 1-5",
 timezone="America/New_York")` — so it tracks the 09:30 open through DST rather than
 drifting an hour in November.
 
-### 3d. Weekly re-login, from your phone
+### 3d. Weekly re-login
 
-The callback URL does not have to be localhost, so the whole OAuth flow happens in a
-phone browser. Two days before expiry the bot texts you a link:
+Two commands, at a desk, once a week. The bot texts you two days before expiry.
 
-1. Tap it → redirected to Schwab
-2. Log in with 2FA on the phone
-3. Schwab redirects back to `auth_callback`, which verifies the CSRF `state`, exchanges
-   the code, writes the token to the Volume, and commits
-4. Page shows "Re-authenticated"
+```bash
+.env\Scripts\python.exe scriptsun_trading.py --login
+```
 
-No terminal, no CLI, no copy-paste. The `state` check is what stops anyone else's
-Schwab code from writing *their* token onto your Volume.
+```bash
+.env\Scripts\python.exe -m modal volume put --force split-strategy-data .schwab_token.json /.schwab_token.json
+```
 
-**Fallback** if Schwab rejects a non-localhost callback: `modal shell` in and run
-`client_from_manual_flow`, which prints a URL you open anywhere and paste the redirect
-back to. Needs a computer; still one token owner.
+A browser must open. If it prints `Login OK` instantly with no browser, the login did
+not happen — `--login` passes `force=True` precisely because a still-valid token used
+to short-circuit the flow and return silently, leaving the 7-day clock untouched. It
+now also warns if the token age fails to reset.
+
+Confirm it took:
+
+```bash
+python scripts/check_account.py
+```
+
+**Do not** point `SCHWAB_CALLBACK_URL` at anything other than `https://127.0.0.1:8182`.
+schwab-py rejects non-loopback hostnames outright, and doing so breaks the only
+working re-auth path. The Modal endpoint URL lives in `SCHWAB_WEB_CALLBACK_URL`.
 
 ---
 
