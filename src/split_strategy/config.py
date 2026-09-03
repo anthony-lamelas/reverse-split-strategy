@@ -134,6 +134,34 @@ MAX_BORROW_COST_PCT = float(os.environ.get("MAX_BORROW_COST_PCT", "0.05"))
 BORROW_ALERT_RATE = float(os.environ.get("BORROW_ALERT_RATE", "100"))
 BORROW_ALERT_MULTIPLE = float(os.environ.get("BORROW_ALERT_MULTIPLE", "3.0"))
 
+# --- Modal workspace ---
+# `~/.modal.toml` is global and holds ONE active profile, so switching it to reach
+# this repo's Volume breaks whatever other project was using it, and switching back
+# breaks this one. Nothing here ever changes that file: MODAL_PROFILE is passed per
+# invocation instead, which overrides the active profile for a single process. The
+# global default can therefore stay pointed at another workspace forever.
+#
+# An explicit MODAL_PROFILE already in the environment wins, so a one-off override on
+# the command line still works.
+MODAL_PROFILE = os.environ.get("MODAL_PROFILE") or "anthony-lamelas23"
+
+# --- Regulatory fees on a short entry (see fees.py) ---
+# Charged on the SELL side, which for a short is the ENTRY. Schwab's zero commission
+# does not cover these. The per-SHARE component dominates here: this strategy shorts
+# sub-dollar names in four-digit share counts, so it costs ~10x more against notional
+# at $0.10 a share than at $1.00.
+#
+# THESE DEFAULTS ARE UNVERIFIED PLACEHOLDERS. Both rates are set by regulators and
+# change - the SEC's Section 31 rate is reset at least annually. Check them against
+# Schwab's current fee schedule, then set FEE_RATES_VERIFIED=1 so the dashboard stops
+# labelling the numbers as unverified. Until then it says so on screen, which is the
+# right way for an unchecked rate to fail.
+FEE_PER_SHARE = float(os.environ.get("FEE_PER_SHARE", "0.000166"))      # FINRA TAF
+FEE_PER_SHARE_CAP = float(os.environ.get("FEE_PER_SHARE_CAP", "8.30"))  # TAF per-trade cap
+FEE_PER_NOTIONAL = float(os.environ.get("FEE_PER_NOTIONAL", "0.0000278"))  # SEC Sec. 31
+FEE_RATES_VERIFIED = os.environ.get("FEE_RATES_VERIFIED", "").strip().lower() in (
+    "1", "true", "yes")
+
 # Absolute ceiling on a SINGLE position's notional, in dollars. Unset/0 = no cap.
 # TRADE_PCT alone is a *proportional* cap, so the dollar size it produces drifts
 # silently as account equity changes - fine at steady state, wrong when you are

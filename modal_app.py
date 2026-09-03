@@ -141,3 +141,136 @@ def trade_once(live: bool = False) -> int:
         return _run_session(["--live", "--i-am-sure"] if live else [])
     finally:
         volume.commit()
+
+
+@app.function(image=image, volumes={DATA_DIR: volume}, secrets=[secrets], timeout=120)
+def account_snapshot(audit_tail: int = 400) -> dict:
+    """Read-only state for `scripts/dashboard.py`. Places no orders, writes nothing.
+
+    Why this runs on Modal instead of on the laptop
+    -----------------------------------------------
+    The dashboard wants live equity and current marks, which means a Schwab client,
+    which means the OAuth token. There are two copies of that token - the canonical
+    one on this Volume and a local one in the repo - and schwab-py rewrites the token
+    file whenever it refreshes. Two copies of one grant, refreshed independently by
+    two hosts, is the shape that produces an `invalid_grant` halt at 09:25 on a
+    morning you were not expecting one. So the dashboard never authenticates: it asks
+    this function, which runs on the host that already owns the token, and gets JSON
+    back. Exactly one host ever refreshes.
+
+    Deliberately no `volume.commit()`. Nothing here writes, and committing would risk
+    persisting a token rewrite from a read-only call.
+
+    Every section degrades independently into `errors` rather than raising: a dead
+    Schwab session must still leave you able to see the ledger and today's audit,
+    which is often exactly when you most want to look at them.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    volume.reload()  # the container may hold a stale view of the Volume
+
+    for key, value in ENV.items():
+        os.environ.setdefault(key, value)
+    sys.path.insert(0, "/app/src")
+
+    out: dict = {"errors": [], "generated_at": datetime.now(timezone.utc).isoformat()}
+
+    # --- ledger ------------------------------------------------------------------
+    try:
+        with open(f"{DATA_DIR}/open_positions_live.json", encoding="utf-8") as fh:
+            out["ledger"] = json.load(fh)
+    except FileNotFoundError:
+        # Not an error: it means no live run has opened a position yet.
+        out["ledger"] = []
+    except Exception as e:
+        out["ledger"] = []
+        out["errors"].append(f"ledger unreadable: {str(e)[:200]}")
+
+    # --- audit tail --------------------------------------------------------------
+    out["audit"] = []
+    try:
+        with open(f"{DATA_DIR}/logs/trading_audit.jsonl", encoding="utf-8") as fh:
+            lines = fh.readlines()[-audit_tail:]
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out["audit"].append(json.loads(line))
+            except json.JSONDecodeError:
+                continue  # a torn final line is normal if a run died mid-write
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        out["errors"].append(f"audit unreadable: {str(e)[:200]}")
+
+    # --- kill switch -------------------------------------------------------------
+    out["stop_present"] = os.path.exists(f"{DATA_DIR}/STOP")
+    out["stop_trading_env"] = os.environ.get("STOP_TRADING", "").strip().lower() in (
+        "1", "true", "yes")
+
+    # --- token age ---------------------------------------------------------------
+    # The refresh token is a HARD 7-day expiry that only an interactive login resets,
+    # so its age is the best available predictor of the next auth halt. mtime tracks
+    # the last REFRESH rather than the last login, so it is an upper bound on
+    # remaining life - the login time is recorded nowhere. It errs toward warning
+    # early, which is the safe direction.
+    token_file = os.environ.get("SCHWAB_TOKEN_PATH", f"{DATA_DIR}/.schwab_token.json")
+    out["token"] = {"path": token_file, "exists": os.path.exists(token_file)}
+    if out["token"]["exists"]:
+        try:
+            out["token"]["mtime"] = datetime.fromtimestamp(
+                os.path.getmtime(token_file), timezone.utc).isoformat()
+        except Exception as e:
+            out["errors"].append(f"token mtime unreadable: {str(e)[:120]}")
+
+    # --- broker ------------------------------------------------------------------
+    try:
+        from split_strategy.broker.schwab_auth import get_client, resolve_account_hash
+        from split_strategy.broker import accounts as acct
+        from split_strategy.broker.quotes import get_quotes
+
+        client = get_client(interactive=False)
+        account_hash = resolve_account_hash(client)
+
+        out["account"] = {
+            "equity": acct.get_account_equity(client, account_hash),
+            "available_funds": acct.get_available_funds(client, account_hash),
+        }
+
+        broker_positions = acct.get_broker_positions(client, account_hash) or {}
+        out["broker_positions"] = {
+            t: {"short_shares": p.short_shares, "long_shares": p.long_shares,
+                "is_short": p.is_short}
+            for t, p in broker_positions.items()
+        }
+
+        live_states = ("PENDING_ENTRY", "OPEN", "PENDING_EXIT")
+        tickers = sorted({p.get("ticker") for p in out["ledger"]
+                          if p.get("status") in live_states and p.get("ticker")})
+        out["quotes"] = {}
+        if tickers:
+            for ticker, q in get_quotes(client, tickers).items():
+                out["quotes"][ticker] = {"bid": q.bid, "ask": q.ask, "last": q.last,
+                                         "mid": q.mid, "spread_pct": q.spread_pct}
+
+        ledger_live = [p for p in out["ledger"] if p.get("status") in live_states]
+        out["discrepancies"] = [
+            {"ticker": d.ticker, "kind": d.kind, "detail": d.detail}
+            for d in acct.reconcile(ledger_live, broker_positions)
+        ]
+    except Exception as e:
+        # Includes SchwabAuthError, which is the expected state once a week.
+        out["account"] = None
+        out["broker_positions"] = {}
+        out["quotes"] = {}
+        out["discrepancies"] = []
+        out["errors"].append(f"schwab unavailable: {str(e)[:300]}")
+
+    # `modal run` does not surface a function's return value, so the caller reads
+    # this line off stdout. Emitted as ONE line, because scripts/dashboard.py scans
+    # stdout line by line to pick the payload out of Modal's own progress output.
+    # The dict is still returned so a future `.remote()` caller gets it directly.
+    print(json.dumps(out, default=str))
+    return out
