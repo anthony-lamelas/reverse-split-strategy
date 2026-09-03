@@ -24,12 +24,48 @@ class Quote:
     bid: Optional[float] = None
     ask: Optional[float] = None
     last: Optional[float] = None
+    #: Previous session's close, for the gap-up filter. Schwab calls this `closePrice`
+    #: (verified against a live payload: AAPL closePrice 324.96 vs lastPrice 327.98).
+    prev_close: Optional[float] = None
+    #: Displayed size behind each side. Zero means the price is a placeholder, not a
+    #: quote anyone will honour - see `entry_price`.
+    bid_size: Optional[float] = None
+    ask_size: Optional[float] = None
 
     @property
     def mid(self) -> Optional[float]:
         if self.bid and self.ask and self.bid > 0 and self.ask > 0:
             return (self.bid + self.ask) / 2.0
         return self.last
+
+    @property
+    def entry_price(self) -> Optional[float]:
+        """The price to size a SHORT entry from, and to test the $1.00 floor against.
+
+        A short sells, and a sell fills at the bid - so the bid is what we actually
+        receive, and sizing off the mid or the ask overstates the proceeds by up to
+        half a spread on names where the filter tolerates 5%.
+
+        **The bid only counts when something is behind it.** Thin names quote garbage
+        outside regular hours, and this runs at 09:25, before the open. Measured live
+        on the exact tickers this strategy was dropping:
+
+            WHLRL   bid 0.0001  (size 0)   ask 2147.48  last 80.00
+            GLTK    bid 0.2526  (size 0)   ask    1.65  last  1.35
+            SCNI    bid 1.9500  (size 500) ask    2.04  last  1.995
+
+        WHLRL's bid is a hundredth of a cent against an eighty-dollar stock, and its
+        ask is a sentinel. Sizing off that bid buys five million shares. The $1.00
+        floor happens to catch this one, but a stub bid of $1.50 on an $80 name would
+        clear the floor and size fifty times too large - so the floor is not the
+        guard. `bid_size > 0` is: a price with no size behind it is not a quote.
+
+        Falls back to `last`, then to None. None marks the signal unpriced, which is
+        what routes it to "missing or invalid price" rather than mis-sizing it.
+        """
+        if self.bid and self.bid > 0 and self.bid_size and self.bid_size > 0:
+            return self.bid
+        return self.last if (self.last and self.last > 0) else None
 
     @property
     def spread_pct(self) -> Optional[float]:
@@ -75,6 +111,12 @@ def parse_quote(ticker: str, payload: dict) -> Quote:
         bid=_positive(q.get("bidPrice")),
         ask=_positive(q.get("askPrice")),
         last=_positive(q.get("lastPrice")),
+        prev_close=_positive(q.get("closePrice")),
+        # `_positive` maps a zero size to None, which `entry_price` treats the same as
+        # absent - both mean "nothing is behind this price". A missing size field is
+        # therefore conservative by default: the bid is not trusted.
+        bid_size=_positive(q.get("bidSize")),
+        ask_size=_positive(q.get("askSize")),
     )
 
 

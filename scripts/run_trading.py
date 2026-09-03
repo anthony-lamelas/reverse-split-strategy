@@ -19,6 +19,7 @@ Exit codes (Task Scheduler records these as LastTaskResult):
     3  halted: STOP kill-switch file present
     4  halted: ran outside the entry window (LIVE only)
     5  halted: no live quotes, so nothing could be entered or covered
+    6  halted: no Schwab client, so no signal could be priced at all
 """
 import argparse
 import json
@@ -302,11 +303,27 @@ def _session(ctx: dict) -> int:
           f"across {len(ps.live_positions(positions))} position(s) | mode={mode.value}")
 
     # --- signals ------------------------------------------------------------------
+    # Schwab is the only price source. Without a client there is nothing to size from,
+    # and every candidate would be skipped as "missing or invalid price" - which reads
+    # exactly like a day with no candidates. That is the failure mode the heartbeat and
+    # the no-quotes halt exist to prevent, so refuse the run instead of completing a
+    # hollow one. In DRY_RUN the client is opportunistic, so this fires on a stale
+    # token rather than on a code problem: re-run --login.
+    if client is None:
+        report.halted = True
+        report.halt_reason = ("no Schwab client: cannot price any signal "
+                              "(run: python scripts/run_trading.py --login)")
+        print(f"HALTED: {report.halt_reason}")
+        if not args.no_alert:
+            send_text("SplitShort: NO PRICE SOURCE", report.halt_reason[:140])
+        write_audit(report)
+        return 6
+
     signals = generate_signals(
         account_size=equity,
         min_confidence=args.min_confidence,
         existing_committed=committed,
-        price_check=True,
+        quote_fn=lambda tickers: get_quotes(client, tickers),
     )
 
     if client is not None:
