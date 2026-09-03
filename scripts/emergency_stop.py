@@ -21,11 +21,15 @@ near its exit date, cover it yourself in the Schwab UI.
 from __future__ import annotations
 
 import argparse
-import os
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Optional
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT / "src"))
+
+from split_strategy import modal_cli  # noqa: E402
 
 VOLUME = "split-strategy-data"
 REMOTE = "/STOP"
@@ -34,18 +38,31 @@ REMOTE = "/STOP"
 def _modal(*args: str) -> tuple[int, str]:
     """Run a modal CLI command, returning (exit_code, combined output).
 
-    Forces UTF-8: the Modal CLI prints box-drawing characters that crash a cp1252
-    Windows console with a bare 'charmap' codec error, which looks like a Modal
-    failure and is not one.
+    Delegates to `split_strategy.modal_cli`, which decodes as UTF-8, strips glyphs a
+    cp1252 console cannot print, and pins MODAL_PROFILE. This function previously did
+    only the first of those, and did it wrong: it set PYTHONIOENCODING in the CHILD's
+    environment but decoded with `text=True`, which uses the PARENT's locale. The
+    result was that a failing halt could raise UnicodeError while printing the reason
+    the halt had failed - in the one tool whose entire job is to work when nothing
+    else does.
     """
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
-    proc = subprocess.run([sys.executable, "-m", "modal", *args],
-                          capture_output=True, text=True, env=env)
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    r = modal_cli.run(*args)
+    return r.returncode, modal_cli.ascii_only(r.combined)
 
 
-def is_halted() -> bool:
-    _, out = _modal("volume", "ls", VOLUME)
+def is_halted() -> Optional[bool]:
+    """True = halted, False = trading allowed, None = COULD NOT DETERMINE.
+
+    The tri-state is the point. This used to discard the exit code and test only
+    whether "STOP" appeared in the output, so a `volume ls` that failed outright -
+    wrong workspace, expired Modal token, no network - contained no "STOP" and was
+    reported as "ACTIVE - trading is allowed". A kill switch that answers "all clear"
+    when it could not reach the switch is worse than one that errors: it is the
+    reassuring version of not knowing.
+    """
+    code, out = _modal("volume", "ls", VOLUME)
+    if code != 0:
+        return None
     return "STOP" in out.split()
 
 
@@ -83,7 +100,14 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.status:
-        print("HALTED" if is_halted() else "ACTIVE - trading is allowed")
+        state = is_halted()
+        if state is None:
+            print("UNKNOWN - could not reach Modal to check the kill switch.")
+            print("Trading may or may not be halted. Check `modal volume ls "
+                  f"{VOLUME}` for a STOP entry, and treat the bot as RUNNING until "
+                  "you have confirmed otherwise.")
+            return 2
+        print("HALTED" if state else "ACTIVE - trading is allowed")
         return 0
     if args.resume:
         return resume()

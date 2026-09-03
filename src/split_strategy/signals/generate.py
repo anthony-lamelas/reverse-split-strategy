@@ -10,13 +10,23 @@ A signal is "actionable" when today is on/after the first business day after the
 filing and strictly before the execution date. The generator ranks High-confidence,
 soonest-executing names first.
 
-Network is only touched when generate_signals() runs (for the live gap-up/price check).
+Prices come from Schwab, via the `quote_fn` passed into generate_signals() - never from
+yfinance. That used to be the other way round, and it cost real trades: yfinance
+returns an EMPTY frame rather than an error for a throttled or unrecognised symbol, so
+a name it could not price was skipped as "missing or invalid price" and looked
+identical to a genuine data gap. Over the first fortnight live that was a third of all
+skips, including GLTK ($4.58) and SCNI ($2.05) - both comfortably above the $1.00 floor
+and both quotable at Schwab in the same run, sixteen lines later.
+
+The module makes no network calls of its own. Its only I/O is the Mongo read of the
+early_edgar_splits scanner; everything price-shaped arrives through injected callables
+(`quote_fn`, and a live client for `enrich_with_schwab_shortability`).
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, asdict, field
-from typing import Optional
+from typing import Callable, Optional
 
 import pandas as pd
 
@@ -66,34 +76,57 @@ def _next_business_day(ts: pd.Timestamp) -> pd.Timestamp:
     return nxt
 
 
-def _price_snapshot(ticker: str):
-    """Return (current_price, prior_close) using a short yfinance history.
+def apply_pricing(
+    sig: "Signal",
+    current_price: Optional[float],
+    prior_close: Optional[float],
+    *,
+    account_size: float,
+    trade_pct: float,
+    max_trade_notional: Optional[float],
+    stop_loss: float,
+    max_gap_up: float,
+) -> "Signal":
+    """Size a signal from a price, in place. Pure: no network, no database.
 
-    current_price = latest available Open (approximates the entry open / premarket);
-    prior_close = the close of the session before the latest. Returns (None, None) on
-    failure (logged by caller). Kept self-contained to avoid returns.py's tz pitfalls.
+    Extracted from `generate_signals` so the arithmetic that decides share counts on a
+    real short book can be tested directly. Every caller previously reached it only
+    through a live yfinance call and a Mongo query, which is why it had no coverage at
+    all.
+
+    A missing or non-positive `current_price` leaves `shares` unset rather than zero,
+    which is what routes the signal to the "missing or invalid price" block reason in
+    `schwab_orders.entry_block_reason` instead of the "buys 0 shares" one. Those two
+    look identical to a reader and mean completely different things - a data outage
+    versus a sizing choice - so the distinction is load-bearing.
     """
-    try:
-        import yfinance as yf
-    except ImportError as e:
-        # Deliberately NOT swallowed with the data errors below. A missing package
-        # made every signal priceless on a trimmed deployment image, and each entry
-        # was skipped as "missing or invalid price" - indistinguishable from a
-        # genuine data gap, and silent for a whole session.
-        raise RuntimeError(
-            "yfinance is not installed, so live prices cannot be fetched. This is a "
-            "deployment problem, not a data problem - check requirements-runtime.txt."
-        ) from e
+    sig.current_price, sig.prior_close = current_price, prior_close
 
-    try:
-        hist = yf.Ticker(ticker).history(period="7d", auto_adjust=False)
-        if hist is None or hist.empty or len(hist) < 2:
-            return None, None
-        current = float(hist["Open"].iloc[-1])
-        prior_close = float(hist["Close"].iloc[-2])
-        return current, prior_close
-    except Exception:
-        return None, None
+    if current_price and prior_close and prior_close > 0:
+        gap = (current_price - prior_close) / prior_close
+        sig.gap_up_pct = round(gap * 100, 2)
+        sig.gap_up_ok = gap <= max_gap_up
+        if not sig.gap_up_ok:
+            sig.notes.append(
+                f"SKIP: gapped up {sig.gap_up_pct:.1f}% (> {max_gap_up*100:.0f}%)")
+
+    if current_price and current_price > 0:
+        notional = account_size * trade_pct
+        if max_trade_notional:
+            # Absolute dollar ceiling, applied after the proportional size so a
+            # growing account cannot silently scale up a deliberately tiny
+            # validation position.
+            notional = min(notional, max_trade_notional)
+        sig.notional = round(notional, 2)
+        sig.shares = int(math.floor(notional / current_price))
+        sig.stop_price = round(current_price * (1 + stop_loss), 4)
+        sig.max_loss = round(notional * stop_loss, 2)
+        if current_price < 1.0:
+            # Sub-$1 is generally non-marginable / not shortable regardless of venue.
+            sig.likely_shortable = False
+            sig.notes.append(
+                "entry < $1.00 - typically non-marginable / not shortable")
+    return sig
 
 
 def generate_signals(
@@ -104,7 +137,7 @@ def generate_signals(
     trade_pct: float = None,
     stop_loss: float = None,
     max_gap_up: float = None,
-    price_check: bool = True,
+    quote_fn: Optional[Callable[[list[str]], dict]] = None,
     existing_committed: float = 0.0,
     max_exposure: Optional[float] = None,
     max_trade_notional: Optional[float] = None,
@@ -116,7 +149,12 @@ def generate_signals(
         as_of: reference "today" (defaults to now).
         min_confidence: minimum scanner confidence (High/Medium/Low).
         lookback_days: how many days back a filing can be and still be actionable.
-        price_check: if True, fetch live prices to apply the gap-up filter and sizing.
+        quote_fn: called once with the ENTER_NOW tickers, returning {TICKER: Quote}.
+            Supplies the price for sizing and the $1.00 floor (the BID, since a short
+            sells into it) and the prior close for the gap-up filter. Pass
+            `lambda ts: get_quotes(client, ts)` in the live path. When None, no signal
+            is priced and every one is left unsized - callers must treat that as a
+            failure, not as a day with no candidates.
         existing_committed: notional $ already tied up in other still-open positions
             (from the portfolio ledger) - counted against the exposure cap before any
             new signal here is allocated capital.
@@ -184,33 +222,37 @@ def generate_signals(
         if not likely_shortable:
             sig.notes.append(f"likely NOT shortable at Schwab (exchange={exch or 'unlisted'})")
 
-        if price_check:
-            cur, prior = _price_snapshot(ticker)
-            sig.current_price, sig.prior_close = cur, prior
-            if cur and prior and prior > 0:
-                gap = (cur - prior) / prior
-                sig.gap_up_pct = round(gap * 100, 2)
-                sig.gap_up_ok = gap <= max_gap_up
-                if not sig.gap_up_ok:
-                    sig.notes.append(f"SKIP: gapped up {sig.gap_up_pct:.1f}% (> {max_gap_up*100:.0f}%)")
-            if cur and cur > 0:
-                notional = account_size * trade_pct
-                if max_trade_notional:
-                    # Absolute dollar ceiling, applied after the proportional size so a
-                    # growing account cannot silently scale up a deliberately tiny
-                    # validation position.
-                    notional = min(notional, max_trade_notional)
-                sig.notional = round(notional, 2)
-                sig.shares = int(math.floor(notional / cur))
-                sig.stop_price = round(cur * (1 + stop_loss), 4)
-                sig.max_loss = round(notional * stop_loss, 2)
-                if cur < 1.0:
-                    # Sub-$1 is generally non-marginable / not shortable regardless of venue.
-                    sig.likely_shortable = False
-                    sig.notes.append("entry < $1.00 - typically non-marginable / not shortable")
-
         signals.append(sig)
 
+    # Price in ONE batched call, after the loop.
+    #
+    # ENTER_NOW *and* HOLDING, because those are exactly the two statuses
+    # `allocate_capital` considers - and it skips any signal without shares. Quoting
+    # only ENTER_NOW would leave every HOLDING name unpriced and therefore silently
+    # unable to consume exposure budget, which is a change to how capital is rationed
+    # rather than a change of price source. UPCOMING names are excluded: allocation
+    # ignores them and they cannot be entered.
+    #
+    # This is deliberately wider than `session.collect_quote_tickers`, which needs
+    # quotes only for orders. That function selects on status rather than on shares,
+    # which is how Schwab came to be quoting the very tickers yfinance had just
+    # declared priceless, sixteen lines further down the same run.
+    if quote_fn is not None:
+        priceable = ("ENTER_NOW", "HOLDING")
+        tickers = sorted({s.ticker.upper() for s in signals
+                          if s.status in priceable and s.ticker})
+        quotes = quote_fn(tickers) if tickers else {}
+        for s in signals:
+            q = quotes.get((s.ticker or "").upper())
+            # No quote leaves the signal unpriced, which routes it to the "missing or
+            # invalid price" block reason - now truthfully about Schwab.
+            apply_pricing(s, q.entry_price if q else None,
+                          q.prev_close if q else None,
+                          account_size=account_size, trade_pct=trade_pct,
+                          max_trade_notional=max_trade_notional,
+                          stop_loss=stop_loss, max_gap_up=max_gap_up)
+
+    # Both depend on `shares`, so they must run after pricing.
     rank_signals(signals)
     allocate_capital(signals, account_size, max_exposure, existing_committed)
     return signals

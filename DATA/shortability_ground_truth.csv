@@ -73,3 +73,7 @@ logged_at,ticker,confidence,entry_price,exchange,proxy_likely_shortable,schwab_i
 2026-08-20T11:27:53.944345,IMCC,High,0.10279999673366547,Nasdaq,False,True,True,-0.25
 2026-08-20T11:27:53.944345,NIVFW,High,,Nasdaq,True,True,True,0.0
 2026-08-20T11:27:53.944345,GCDT,High,0.4025000035762787,NYSE,False,True,True,-58.0
+2026-09-03T17:10:50.544015,SFWL,High,0.8711,Nasdaq,False,True,True,0.0
+2026-09-03T17:10:50.544015,CLGN,High,,Nasdaq,True,True,True,-177.0
+2026-09-03T17:10:50.544015,PHGE,High,,NYSE,True,True,True,-31.25
+2026-09-03T17:10:50.544015,PHGE,High,,NYSE,True,True,True,-31.25

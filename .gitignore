@@ -50,6 +50,8 @@ logs/task_scheduler.log
 
 # Local open-positions ledger (operational state, not source data)
 DATA/open_positions_*.json
+# Dashboard's offline fallback: a copy of account equity, the ledger and live quotes.
+DATA/dashboard_cache.json
 
 # Local event/price caches used by walk-forward analysis scripts
 DATA/events_combined_cache.pkl

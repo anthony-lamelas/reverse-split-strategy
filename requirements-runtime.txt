@@ -13,11 +13,20 @@
 #   openai                       - the LLM classifier, runs in the nightly job
 #   polygon-api-client           - never adopted; Polygon was out of scope
 #
-# schwab-py and yfinance are imported LAZILY (inside functions), so they do not
-# appear in an import trace of the module graph - both are required at runtime.
-# yfinance in particular: signals/generate.py::_price_snapshot uses it for the
-# current price that drives sizing and the price floor. Without it every signal
-# comes back priceless and every entry is silently skipped.
+# schwab-py is imported LAZILY (inside functions), so it does not appear in an import
+# trace of the module graph - it is required at runtime.
+#
+# yfinance is NO LONGER used for sizing. `_price_snapshot` is gone: prices now come
+# from Schwab quotes via generate_signals(quote_fn=...), because yfinance returns an
+# empty frame rather than an error for a throttled or unrecognised symbol, and those
+# names were skipped as "missing or invalid price" - a third of all skips over the
+# first fortnight live, including two candidates above the $1.00 floor.
+#
+# It is kept here deliberately, for now. An import trace confirms the live path no
+# longer loads it, but this same comment block exists because a lazy in-function
+# import does not show up in such a trace, and this file builds the image that trades
+# real money at 09:25. The cost of keeping an unused wheel is a slightly larger image;
+# the cost of being wrong is a halted trading day. Drop it after a few clean live runs.
 
 pandas>=2.0.0
 numpy>=1.24.0
