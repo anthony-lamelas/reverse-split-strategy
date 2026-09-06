@@ -42,6 +42,47 @@ CHOSEN_STRATEGY = dict(
 )
 
 
+def split_factor(ticker_data: pd.DataFrame, t_split, ratio) -> Optional[float]:
+    """The factor the series jumps by at `t_split`, or None if it does not jump.
+
+    None means one of two things, and they are NOT distinguishable from prices alone:
+    the provider already back-adjusted the series (so it is continuous), or the split
+    never actually executed. Either way there is no mechanical jump to remove.
+
+    This is the single source of truth for "is this series raw or adjusted?".
+    `neutralize_split` uses it to decide what to divide by, and `price_basis` uses it
+    to decide whether a quoted price needs converting back to real dollars - those two
+    must never disagree, which is why the rule lives in one place.
+    """
+    if pd.isna(t_split):
+        return None
+    before = ticker_data[ticker_data.index < t_split]
+    on_after = ticker_data[ticker_data.index >= t_split]
+    if before.empty or on_after.empty:
+        return None
+
+    prev_close = before["Close"].iloc[-1]
+    first_open = on_after["Open"].iloc[0]
+    if not (pd.notna(prev_close) and pd.notna(first_open) and prev_close > 0):
+        return None
+
+    observed_jump = first_open / prev_close
+
+    factor = None
+    if pd.notna(ratio) and ratio and ratio > 1:
+        # Declared ratio available: apply it if a broadly consistent jump is present.
+        # Real trading moves alongside the split, so allow a wide tolerance band.
+        if observed_jump >= ratio * 0.5:
+            factor = float(ratio)
+    if factor is None and observed_jump >= 1.8:
+        # No usable declared ratio, but an unmistakable mechanical jump: use observed.
+        factor = float(observed_jump)
+
+    if factor is None or factor <= 1:
+        return None
+    return factor
+
+
 def neutralize_split(ticker_data: pd.DataFrame, t_split, ratio) -> pd.DataFrame:
     """Remove the mechanical reverse-split price jump from an OHLC frame.
 
@@ -69,25 +110,8 @@ def neutralize_split(ticker_data: pd.DataFrame, t_split, ratio) -> pd.DataFrame:
     if before.empty or on_after.empty:
         return ticker_data
 
-    prev_close = before["Close"].iloc[-1]
-    first_open = on_after["Open"].iloc[0]
-    if not (pd.notna(prev_close) and pd.notna(first_open) and prev_close > 0):
-        return ticker_data
-
-    observed_jump = first_open / prev_close
-
-    # Decide the factor to divide by.
-    factor = None
-    if pd.notna(ratio) and ratio and ratio > 1:
-        # Declared ratio available: apply it if a broadly consistent jump is present.
-        # Real trading moves alongside the split, so allow a wide tolerance band.
-        if observed_jump >= ratio * 0.5:
-            factor = float(ratio)
-    if factor is None and observed_jump >= 1.8:
-        # No usable declared ratio, but an unmistakable mechanical jump: use observed.
-        factor = float(observed_jump)
-
-    if factor is None or factor <= 1:
+    factor = split_factor(ticker_data, t_split, ratio)
+    if factor is None:
         return ticker_data  # already adjusted, or no split jump present
 
     adjusted = ticker_data.copy()
@@ -142,6 +166,7 @@ def backtest_mega(
     trade_pct: float = 0.05,
     slippage_and_fees: float = 0.015,
     entry_offset: int = 0,
+    entry_anchor: str = "t_ann",
     adjust_for_split: bool = True,
     slippage_model: str = "flat",
     max_spread_pct: float = INF,
@@ -153,8 +178,12 @@ def backtest_mega(
         df_events: columns ['ticker', 't_ann', 't_split', 'ratio'] (t_* are Timestamps).
         prices: yfinance-style panel with a MultiIndex column (ticker, OHLCV) and a
             DatetimeIndex. `prices[ticker]['Open'/'High'/'Low'/'Close']`.
-        entry_offset: 0 = enter at first session on/after t_ann (faithful to notebook);
-            1 = enter at the next session (realistic "morning after").
+        entry_offset: 0 = enter at first session on/after the anchor (faithful to
+            notebook); 1 = enter at the next session (realistic "morning after").
+        entry_anchor: which event date entry is measured from - "t_ann" (default,
+            the announcement: the validated strategy) or "t_split" (the effective
+            date, for testing whether the drift continues AFTER the split). Note
+            "t_split" requires an integer `hold_rule`; see the guard below.
         slippage_model: "flat" uses `slippage_and_fees` for every trade (the original
             behavior, preserved so published results stay reproducible).
             "spread_estimated" replaces it with a per-trade Corwin-Schultz bid-ask
@@ -175,6 +204,21 @@ def backtest_mega(
     # An empty event set is a legitimate outcome (e.g. a walk-forward fold or a date
     # filter that matched nothing). `build_events_*` can return a column-less empty
     # frame, so bail before touching df_events["t_ann"].
+    if entry_anchor not in ("t_ann", "t_split"):
+        raise ValueError(f"entry_anchor must be 't_ann' or 't_split', got {entry_anchor!r}")
+
+    # Anchoring entry to the split makes every split-relative hold rule degenerate:
+    # entry_date is then >= t_split, so "day_of_split" asks for bars after entry and
+    # on/before the split and gets an empty frame. `_holding_window` returning empty
+    # makes the loop `continue`, so the whole run would report zero trades and read as
+    # "the hypothesis failed" when nothing was ever tested. Refuse instead.
+    if entry_anchor == "t_split" and not isinstance(hold_rule, int):
+        raise ValueError(
+            f"entry_anchor='t_split' requires an integer hold_rule (a number of "
+            f"sessions to hold after entry); got hold_rule={hold_rule!r}, which is "
+            f"measured relative to the split and would select an empty window."
+        )
+
     if df_events is None or df_events.empty:
         return pd.DataFrame()
 
@@ -210,8 +254,11 @@ def backtest_mega(
         if adjust_for_split:
             ticker_data = neutralize_split(ticker_data, row["t_split"], ratio)
 
-        # --- Entry: Open of the (entry_offset-th) session on/after the announcement ---
-        future_data = ticker_data[ticker_data.index >= row["t_ann"]]
+        # --- Entry: Open of the (entry_offset-th) session on/after the anchor date ---
+        anchor_date = row["t_ann"] if entry_anchor == "t_ann" else row["t_split"]
+        if pd.isna(anchor_date):
+            continue
+        future_data = ticker_data[ticker_data.index >= anchor_date]
         if len(future_data) <= entry_offset:
             continue
         future_data = future_data.iloc[entry_offset:]

@@ -82,6 +82,15 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--floor", type=float, default=1.00,
                     help="minimum entry price; 0 disables the filter")
+    ap.add_argument("--max-price", type=float, default=float("inf"),
+                    help="exclusive upper bound on entry price; with --floor 0 this "
+                         "isolates the bucket a floor would reject")
+    ap.add_argument("--price-basis", choices=("panel", "quoted"), default="panel",
+                    help="which dollars the floor is measured in. 'panel' (default) "
+                         "reads DATA/prices_full.pkl as-is and reproduces the "
+                         "original run. 'quoted' converts back-adjusted prices to "
+                         "the dollars a live quote would have shown - see "
+                         "split_strategy.backtest.price_basis.")
     ap.add_argument("--out", default="analysis/price_floor_walkforward.md")
     args = ap.parse_args()
 
@@ -89,18 +98,37 @@ def main() -> int:
     prices = pd.read_pickle(ROOT / "DATA" / "prices_full.pkl")
 
     events = events.copy()
-    events["entry_price"] = entry_prices(events, prices)
+    if args.price_basis == "quoted":
+        # ~95% of these series are back-adjusted, which MULTIPLIES pre-split bars by
+        # the split ratio - so the panel price is not the price the live $1.00 floor
+        # tests. Events whose quoted price cannot be recovered (no usable ratio) drop
+        # out rather than being filtered on a number we cannot justify.
+        from split_strategy.backtest.price_basis import entry_basis
+        events["entry_price"] = entry_basis(events, prices,
+                                            entry_offset=1)["quoted_price"]
+    else:
+        events["entry_price"] = entry_prices(events, prices)
     priced = events["entry_price"].notna()
+    print(f"Price basis: {args.price_basis} "
+          f"({priced.sum()} of {len(events)} events priced)")
 
+    keep = priced.copy()
+    bounds = []
     if args.floor > 0:
-        keep = priced & (events["entry_price"] >= args.floor)
-        print(f"Filtering to entry price >= ${args.floor:.2f}: "
+        keep &= events["entry_price"] >= args.floor
+        bounds.append(f">= ${args.floor:.2f}")
+    if np.isfinite(args.max_price):
+        # The complement of a floor: lets the SAME walk-forward measure the bucket the
+        # floor throws away, instead of inferring it from the difference of two runs.
+        keep &= events["entry_price"] < args.max_price
+        bounds.append(f"< ${args.max_price:.2f}")
+    if bounds:
+        print(f"Filtering to entry price {' and '.join(bounds)}: "
               f"{keep.sum()} of {priced.sum()} priced events kept "
               f"({100 * keep.sum() / priced.sum():.0f}%)")
-        filtered = events[keep].drop(columns=["entry_price"])
     else:
-        print(f"No price floor: {priced.sum()} priced events")
-        filtered = events[priced].drop(columns=["entry_price"])
+        print(f"No price filter: {priced.sum()} priced events")
+    filtered = events[keep].drop(columns=["entry_price"])
 
     print(f"Running walk-forward on {len(filtered)} events (this takes a while) ...")
     folds = walk_forward(
@@ -115,8 +143,7 @@ def main() -> int:
         return 1
     pooled = pd.concat(frames, ignore_index=True).sort_values("entry_date")
 
-    label = (f"Strategy B, entry price >= ${args.floor:.2f}" if args.floor > 0
-             else "Strategy B, no price floor")
+    label = "Strategy B, " + (", ".join(bounds) if bounds else "no price filter")             + f" ({args.price_basis} prices)"
     report = summarize(pooled, label)
     print("\n" + report)
 
@@ -134,7 +161,7 @@ def main() -> int:
     out.write_text(
         f"# Price-floor walk-forward\n\n"
         f"_Generated {pd.Timestamp.now().date()} · floor ${args.floor:.2f} · "
-        f"{len(folds)} folds_\n\n"
+        f"price basis **{args.price_basis}** · {len(folds)} folds_\n\n"
         f"Parameter selection ran on the filtered universe, so this is an honest\n"
         f"out-of-sample expectation rather than a post-hoc slice of an older run.\n\n"
         f"```\n{report}\n```\n",

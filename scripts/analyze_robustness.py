@@ -25,24 +25,11 @@ from split_strategy.backtest.engine import backtest_mega, CHOSEN_STRATEGY, neutr
 from split_strategy.backtest.events import build_events_from_early_edgar
 from split_strategy.backtest.shortability import classify_shortability, load_exchange_map
 
-RNG = np.random.default_rng(12345)
-
-
-def bootstrap_ci(returns: np.ndarray, n_boot: int = 20000, alpha: float = 0.05):
-    """Bootstrap CI for the mean per-trade return."""
-    if len(returns) == 0:
-        return np.nan, np.nan, np.nan
-    means = RNG.choice(returns, size=(n_boot, len(returns)), replace=True).mean(axis=1)
-    lo, hi = np.percentile(means, [100 * alpha / 2, 100 * (1 - alpha / 2)])
-    p_positive = float((means > 0).mean())
-    return lo, hi, p_positive
-
-
-def borrow_adjusted(trades: pd.DataFrame, annual_rate: float) -> float:
-    """Mean per-trade return after subtracting a borrow fee for the holding period."""
-    days = (pd.to_datetime(trades["exit_date"]) - pd.to_datetime(trades["entry_date"])).dt.days.clip(lower=1)
-    fee = annual_rate * days / 365.0
-    return float((trades["net_return"] - fee).mean())
+# Moved to split_strategy.analysis.stats so other analyses can reuse them; the seed
+# and the arithmetic are unchanged, so this script's published figures still
+# reproduce exactly.
+from split_strategy.analysis.stats import (RNG, borrow_adjusted,  # noqa: E402,F401
+                                           bootstrap_ci)
 
 
 def gap_through_returns(trades: pd.DataFrame, prices: pd.DataFrame) -> pd.Series:

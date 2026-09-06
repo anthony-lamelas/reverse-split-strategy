@@ -122,6 +122,97 @@ def _single_trade_setup(opens, highs=None, lows=None, closes=None, ratio=np.nan)
     return events, prices
 
 
+class TestEntryAnchor:
+    """Entry measured from the split rather than the announcement.
+
+    Tests whether the drift continues AFTER the effective date - a different
+    hypothesis from the validated one, so it gets its own explicit coverage.
+    """
+
+    def test_default_anchor_is_the_announcement(self):
+        """The existing behaviour must be untouched by adding the parameter."""
+        events, prices = _single_trade_setup(opens=[1.0, 1.0, 0.9, 0.8, 0.8, 0.8])
+        default = backtest_mega(events, prices, hold_rule="day_of_split", entry_offset=1)
+        explicit = backtest_mega(events, prices, hold_rule="day_of_split",
+                                 entry_offset=1, entry_anchor="t_ann")
+        pd.testing.assert_frame_equal(default, explicit)
+
+    def test_split_anchor_enters_on_the_effective_date(self):
+        """Split is DAYS[3]; entry_offset=0 buys that session's open.
+
+        Opens stay below a 1.8x step so `neutralize_split`'s no-declared-ratio
+        fallback does not fire and the arithmetic here is the engine's, not the
+        adjuster's. The interaction is covered separately below.
+        """
+        events, prices = _single_trade_setup(
+            opens=[1.0, 1.0, 1.0, 1.2, 1.1, 1.0])
+        trades = backtest_mega(events, prices, hold_rule=2, entry_offset=0,
+                               entry_anchor="t_split", max_gap_up=INF)
+        assert len(trades) == 1
+        t = trades.iloc[0]
+        assert t["entry_date"] == DAYS[3]
+        assert t["entry_price"] == pytest.approx(1.2)
+        # hold_rule=2 -> the two sessions after entry; time exit at DAYS[5] open.
+        assert t["exit_date"] == DAYS[5]
+        assert t["exit_price"] == pytest.approx(1.0)
+        assert t["net_return"] == pytest.approx((1.2 - 1.0) / 1.2 - SLIPPAGE)
+
+    def test_split_anchor_respects_entry_offset(self):
+        events, prices = _single_trade_setup(
+            opens=[1.0, 1.0, 1.0, 1.2, 1.1, 1.0])
+        trades = backtest_mega(events, prices, hold_rule=1, entry_offset=1,
+                               entry_anchor="t_split", max_gap_up=INF)
+        assert trades.iloc[0]["entry_date"] == DAYS[4]
+        assert trades.iloc[0]["entry_price"] == pytest.approx(1.1)
+
+    def test_neutralization_still_applies_under_a_split_anchor(self):
+        """A raw (unadjusted) series is neutralized before entry is priced.
+
+        This is the real-world case for the ~5% of series that still carry the
+        mechanical jump. Entry and exit are both post-split, so the factor cancels
+        in the return - but the recorded prices are in pre-split terms, which is
+        exactly why a price-LEVEL filter must not be read off these numbers.
+        """
+        events, prices = _single_trade_setup(
+            opens=[1.0, 1.0, 1.0, 10.0, 9.0, 8.0], ratio=10.0)
+        trades = backtest_mega(events, prices, hold_rule=2, entry_offset=0,
+                               entry_anchor="t_split", max_gap_up=INF)
+        t = trades.iloc[0]
+        assert t["entry_price"] == pytest.approx(1.0)   # 10.0 / 10
+        assert t["exit_price"] == pytest.approx(0.8)    # 8.0 / 10
+        # The return is identical to the unadjusted one: the factor cancels.
+        assert t["net_return"] == pytest.approx((10.0 - 8.0) / 10.0 - SLIPPAGE)
+
+    def test_split_relative_hold_rule_raises_instead_of_returning_nothing(self):
+        """The trap this guard exists for.
+
+        With entry anchored to the split, entry_date >= t_split, so "day_of_split"
+        asks for bars after entry and on/before the split - an empty frame. The loop
+        would `continue` on every event and the run would report zero trades, which
+        reads as "the hypothesis failed" when nothing was ever tested.
+        """
+        events, prices = _single_trade_setup(opens=[1.0] * 6)
+        for rule in ("day_of_split", "day_before_split", "day_after_split",
+                     "5_days_after_split"):
+            with pytest.raises(ValueError, match="requires an integer hold_rule"):
+                backtest_mega(events, prices, hold_rule=rule, entry_anchor="t_split")
+
+    def test_unknown_anchor_raises(self):
+        events, prices = _single_trade_setup(opens=[1.0] * 6)
+        with pytest.raises(ValueError, match="entry_anchor must be"):
+            backtest_mega(events, prices, hold_rule=2, entry_anchor="t_filing")
+
+    def test_validation_runs_before_the_empty_event_shortcut(self):
+        """A bad combination must raise even when there are no events to run.
+
+        Otherwise a walk-forward fold that happens to be empty would swallow the
+        misconfiguration and only some folds would raise.
+        """
+        with pytest.raises(ValueError):
+            backtest_mega(pd.DataFrame(), pd.DataFrame(), hold_rule="day_of_split",
+                          entry_anchor="t_split")
+
+
 class TestBacktestMegaMechanics:
     def test_time_exit_return_is_exact(self):
         """Entry at day1 open (1.00), cover at day3 open (0.80) => +20% gross, -1.5% fees."""
