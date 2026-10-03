@@ -31,7 +31,7 @@ from split_strategy.edgar.client import (
 )
 from split_strategy.edgar.utils import normalize_cik, primary_ticker_by_cik, scan_target_dates
 from split_strategy.live import calendar as mcal
-from split_strategy.edgar.llm_analysis import analyze_with_llm, check_keywords_extensive
+from split_strategy.edgar import scanner
 
 
 # Target Forms
@@ -70,23 +70,15 @@ def process_filing(filing: dict) -> dict:
             
             resp.raise_for_status()
             
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            text = soup.get_text(separator=' ', strip=True)
-            
-            # 1. Quick Keyword Filter
-            if not check_keywords_extensive(text):
+            # Keyword filter, then LLM - shared with the historical backfill so the
+            # backtest's events come from this exact classifier.
+            analysis = scanner.classify(resp.text, filing['company_name'],
+                                        filing['date_filed'], OPENAI_API_KEY)
+            if analysis is None:
                 return None
-                
+
             print(f"  > Keyword match found for {filing['company_name']}!")
-            
-            # 2. LLM Analysis
-            analysis = analyze_with_llm(
-                text, 
-                filing['company_name'], 
-                filing['date_filed'],
-                openai_api_key=OPENAI_API_KEY
-            )
-            
+
             if not analysis.get("is_reverse_split", False):
                 print("    LLM says: Not a reverse split.")
                 return None
@@ -103,10 +95,15 @@ def process_filing(filing: dict) -> dict:
             print(f"    Confirmed! Date: {analysis.get('effective_date')}, Ratio: {analysis.get('ratio')}")
             
             return {
-                "ticker": "UNKNOWN", # Resolved later
+                # The symbol on the filing's own cover page when there is one;
+                # otherwise resolved from the CIK in main().
+                "ticker": analysis.get("trading_symbol") or "UNKNOWN",
                 "cik": normalize_cik(filing["cik"]),
                 "company_name": filing["company_name"],
                 "filing_date": filing["date_filed"],
+                # When the market could first know (ET). Not yet used for the entry
+                # date - recorded so live and backtest can be compared on it.
+                "accepted_at": analysis.get("accepted_at"),
                 "form": filing["form"],
                 "filing_url": full_url,
                 "effective_date": analysis.get("effective_date"),
@@ -187,7 +184,8 @@ def main():
                 try:
                     hit = future.result()
                     if hit:
-                        hit['ticker'] = resolve_ticker(hit['cik'])
+                        if hit['ticker'] == "UNKNOWN":
+                            hit['ticker'] = resolve_ticker(hit['cik'])
                         hits.append(hit)
                         
                         # Update MongoDB (if configured)

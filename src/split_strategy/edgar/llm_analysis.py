@@ -94,6 +94,10 @@ def analyze_with_llm(text: str, company: str, filing_date: str, openai_api_key: 
         response = client.chat.completions.create(
             model="gpt-4o-mini", 
             messages=[{"role": "user", "content": prompt}],
+            # Deterministic: the same filing must classify the same way in the live
+            # scan and in the historical backfill, or the backtest describes a
+            # different signal from the one being traded.
+            temperature=0,
             response_format={"type": "json_object"}
         )
         

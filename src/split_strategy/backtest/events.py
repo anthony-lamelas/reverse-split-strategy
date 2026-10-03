@@ -61,6 +61,20 @@ def parse_ratio(ratio_str) -> float:
     return factor
 
 
+def reverse_factor(ratio_str) -> float:
+    """Reverse-split factor for a filing ALREADY classified as a reverse split.
+
+    The classifier writes the same split either way round ("1-for-30" or "30-for-1").
+    `parse_ratio` rightly treats the second as a forward split when the direction is
+    unknown; here it is known, so the larger number is the factor.
+    """
+    factor = parse_ratio(ratio_str)
+    if factor == factor:  # not NaN
+        return factor
+    swapped = re.sub(r"(\d+(?:\.\d+)?)(\D+?)(\d+(?:\.\d+)?)", r"\3\2\1", str(ratio_str or ""), count=1)
+    return parse_ratio(swapped)
+
+
 def _to_ts(value) -> pd.Timestamp:
     """Parse a date that may be 'YYYYMMDD', 'YYYY-MM-DD', or a datetime. tz-naive."""
     if value is None:
@@ -162,6 +176,69 @@ def build_events_from_tier_ab() -> pd.DataFrame:
         )
     df = pd.DataFrame(rows).dropna(subset=["t_ann", "t_split"])
     return df.sort_values("t_ann").reset_index(drop=True)
+
+
+EVENTS_V2_COLLECTION = "events_v2"
+
+
+def executable_events(docs, min_confidence: str = "High") -> pd.DataFrame:
+    """Turn classified filings into events that could actually have been traded.
+
+    An event survives only if, in ONE filing, the classifier found a definitive,
+    future reverse split with a stated effective date. That is the rule the old
+    backtest lacked: it dated the announcement from the earliest filing of any kind
+    and took the effective date from wherever it eventually appeared, so 45% of its
+    trades were entered before the exit date had been published.
+
+    Columns: ticker, t_ann (acceptance timestamp, ET), t_filed (filing date),
+    t_split, ratio, entry_first_open (first session open after acceptance),
+    entry_live (the session after the filing date - what the live system does today,
+    since it reads the previous day's index), adsh, form, confidence.
+    Pure: `docs` is any iterable of events_v2 documents.
+    """
+    from ..live import calendar as mcal
+
+    conf_rank = {"low": 0, "medium": 1, "high": 2}
+    min_rank = conf_rank.get((min_confidence or "").lower(), -1)
+    rows = []
+    for d in docs:
+        if not (d.get("is_reverse_split") and d.get("is_definitive")):
+            continue
+        if d.get("is_future_split") is False:
+            continue
+        if conf_rank.get(str(d.get("confidence", "")).lower(), -1) < min_rank:
+            continue
+        ticker = d.get("ticker")
+        if not ticker or ticker == "UNKNOWN":
+            continue
+        t_filed = _to_ts(d.get("filing_date"))
+        t_split = _to_ts(d.get("effective_date"))
+        t_ann = _to_ts(d.get("accepted_at"))
+        if pd.isna(t_ann):
+            t_ann = t_filed  # no acceptance time: assume the open of the filing date
+        if pd.isna(t_filed) or pd.isna(t_split) or pd.isna(t_ann):
+            continue
+        entry_first = mcal.first_open_after(t_ann)
+        if t_split <= entry_first:  # nothing left to hold by the first possible entry
+            continue
+        rows.append(dict(
+            ticker=str(ticker).upper(), t_ann=t_ann, t_filed=t_filed, t_split=t_split,
+            ratio=reverse_factor(d.get("ratio")),
+            entry_first_open=entry_first,
+            entry_live=mcal.next_trading_day(t_filed),
+            adsh=d.get("adsh"), form=d.get("form"), confidence=d.get("confidence"),
+        ))
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    # One event per split: the EARLIEST filing that published its effective date.
+    df = df.sort_values("t_ann").drop_duplicates(subset=["ticker", "t_split"], keep="first")
+    return df.reset_index(drop=True)
+
+
+def build_events_v2(min_confidence: str = "High") -> pd.DataFrame:
+    """Executable events from the `events_v2` backfill (scripts/backfill_events.py)."""
+    return executable_events(get_collection(EVENTS_V2_COLLECTION).find({}), min_confidence)
 
 
 def build_events_combined(as_of: Optional[pd.Timestamp] = None) -> pd.DataFrame:

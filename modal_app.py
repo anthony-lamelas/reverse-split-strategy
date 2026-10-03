@@ -124,6 +124,22 @@ def scan() -> int:
     return code
 
 
+@app.function(image=scan_image, secrets=[secrets], timeout=86400)
+def backfill(start: str, end: str, max_llm: int = 0) -> int:
+    """Classify historical filings into `events_v2` (scripts/backfill_events.py).
+
+    Research only: never trades, never touches the Volume. Resumable - run it again
+    with the same range and it picks up where it stopped.
+
+        modal run --detach modal_app.py::backfill --start 2019-01-01 --end 2026-10-02
+    """
+    env = {**os.environ, "PYTHONPATH": "/app/src", "PYTHONUNBUFFERED": "1"}
+    cmd = [sys.executable, "/app/scripts/backfill_events.py",
+           "--start", start, "--end", end, "--max-llm", str(max_llm)]
+    print(f"$ {' '.join(cmd)}")
+    return subprocess.run(cmd, env=env, cwd="/app").returncode
+
+
 def _run_session(extra_args: list[str] | None = None) -> int:
     """Run the trading session as a subprocess, preserving its exit code."""
     env = {**os.environ, **ENV}
