@@ -67,6 +67,42 @@ month of data.
 - Trades that cannot be closed at a known price (`no_exit_bar`) are counted and reported,
   with the result re-stated assuming each lost 100%.
 
+## Addendum, 2026-10-03 — the "last session" variant
+
+_Written after the first development run (Oct 2024 – Sep 2025) and before any event
+dated earlier than October 2024 was priced._
+
+**What the first run showed.** The primary rule took 24 trades and returned −0.73% net
+(CI −6.7% to +4.6%; 48 of 200 placebo runs matched it). The pre-asked T-1 vs T-0
+comparison was decisive: on 86 events tradeable both ways, covering at the T-1 open
+grossed +3.5% and covering at the split-day open +10.1%. A post-hoc split of the days
+around 217 confirmed splits put the return in two legs — the last pre-split session,
+open to close (+4.5%, t = 6.0), and the night into the split (+2.9%, t = 3.9) — with
+nothing on the first adjusted day (−1.0%, t = −0.8).
+
+That decomposition was found by looking, on this window. It is a hypothesis.
+
+**The variant.** Let E be the effective date stated in the filing. Short at the open of
+the last session before E; the filing must have been known by then.
+
+| | Primary of the variant | Also reported |
+|---|---|---|
+| Cover | close of that same session | open of the next session (E) |
+| Known by | live rule (session after the filing date) | first open after acceptance |
+| Price floor | none | $0.50, $1.00 |
+| Stop | none | 40% intraday |
+
+Every event is included whether or not the split later executed — a trader could not
+have known. For the next-open cover, a split the provider records on E is undone; a
+price jump with no split record is counted as `unverified_jump` and excluded.
+
+**Test.** October 2021 – September 2024 is untouched and is the confirmation sample;
+it is reported separately from the 2024–25 window the idea came from. Same statistics,
+costs (0×/1×/2×) and placebo as above. The held-out year stays held out.
+
+**Pass:** on the confirmation sample, the variant's primary has a bootstrap CI lower
+bound above zero at 1× costs and fewer than 5% of placebo runs reach it.
+
 ## Go / no-go (Gate 3)
 
 Go only if, for the primary rule on the development window at 1× costs:

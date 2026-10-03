@@ -30,10 +30,16 @@ from split_strategy.backtest.prices_v2 import PolygonPrices  # noqa: E402
 
 EVENTS_PATH = config.DATA_DIR / "events_v2.json"
 HOLDOUT_START = pd.Timestamp("2025-10-01")
-PRIMARY = sim.Rule(entry="live", exit_sessions_before=1, stop=0.40, target=0.20, min_price=1.00)
-GRID = [sim.Rule(entry=e, exit_sessions_before=x, stop=s, target=t, min_price=f)
+ANNOUNCE_PRIMARY = sim.Rule(entry="live", exit_sessions_before=1, stop=0.40, target=0.20, min_price=1.00)
+ANNOUNCE_GRID = [sim.Rule(entry=e, exit_sessions_before=x, stop=s, target=t, min_price=f)
         for e, x, s, t, f in itertools.product(
             ("live", "first_open"), (1, 0), (None, 0.40, 0.25), (0.20, None), (None, 0.50, 1.00))]
+
+
+LS_PRIMARY = sim.LastSessionRule(cover="close", known="live", stop=None, min_price=None)
+LS_GRID = [sim.LastSessionRule(cover=c, known=k, stop=st, min_price=f)
+           for c, k, st, f in itertools.product(
+               ("close", "next_open"), ("live", "first_open"), (None, 0.40), (None, 0.50, 1.00))]
 
 
 def pull() -> int:
@@ -80,6 +86,8 @@ def run(args) -> int:
     events = events[held] if args.holdout else events[~held]
     if args.start:
         events = events[events["entry_live"] >= pd.Timestamp(args.start)]
+    if args.end:
+        events = events[events["entry_live"] <= pd.Timestamp(args.end)]
     if args.max_events:
         events = events.tail(args.max_events)
     print(f"{'HOLDOUT' if args.holdout else 'Development'} window: {len(events)} executable "
@@ -104,9 +112,12 @@ def run(args) -> int:
           + (f" ({', '.join(unpriced[:15])}{'...' if len(unpriced) > 15 else ''})" if unpriced else ""))
 
     costs = sim.Costs()
+    last = args.variant == "last"
+    PRIMARY, GRID = (LS_PRIMARY, LS_GRID) if last else (ANNOUNCE_PRIMARY, ANNOUNCE_GRID)
+    runner = sim.run_last_session if last else sim.run_rule
 
     def go(evs, rule, k=1.0):
-        return sim.run_rule(evs, bars.get, splits.get, rule, costs.scaled(k))
+        return runner(evs, bars.get, splits.get, rule, costs.scaled(k))
 
     print(f"\n== PRIMARY: {PRIMARY.label()}")
     for k in (0.0, 1.0, 2.0):
@@ -143,7 +154,7 @@ def run(args) -> int:
         print("\n== SENSITIVITY GRID (costs x1) - reported in full, not searched")
         for rule in GRID:
             trades, _ = go(events, rule)
-            print(f"  {rule.label():62s} {fmt(summarize(trades))}")
+            print(f"  {rule.label():64s} {fmt(summarize(trades))}")
     return 0
 
 
@@ -156,6 +167,10 @@ def main() -> int:
     r.add_argument("--placebo", type=int, default=0, help="number of placebo runs")
     r.add_argument("--no-grid", action="store_true")
     r.add_argument("--start", default=None, help="ignore events entered before this date")
+    r.add_argument("--end", default=None, help="ignore events entered after this date")
+    r.add_argument("--variant", choices=("announce", "last"), default="announce",
+                   help="announce: hold from the announcement (deployed). "
+                        "last: the last-session variant")
     r.add_argument("--max-events", type=int, default=0, help="most recent N events (smoke test)")
     args = ap.parse_args()
     return pull() if args.cmd == "pull" else run(args)
