@@ -22,7 +22,7 @@ from typing import Optional
 
 from .. import borrow as brw
 from .. import margin as mgn
-from .quotes import Quote, marketable_limit_price, spread_too_wide
+from .quotes import Quote, marketable_limit_price, round_to_tick, spread_too_wide
 
 
 class OrderMode(str, Enum):
@@ -60,8 +60,9 @@ class RiskLimits:
     """Circuit breakers. Exceeding one stops the order, it does not shrink it."""
     max_new_shorts_per_day: int = 5
     max_daily_notional: float = 5_000.0
-    #: Refuse entries below this price. The sub-$1 bucket has no measured edge
-    #: (t=0.46 over 29 trades) and a ~5.9x margin multiple. None = no floor.
+    #: Refuse entries below this price: ~6x margin under $1 and unmeasured borrow
+    #: and spread - a cost guard, not an absence of edge (config.MIN_ENTRY_PRICE).
+    #: None = no floor.
     min_entry_price: Optional[float] = None
     #: Total short maintenance margin the account may carry (None = unchecked).
     #: Binds far harder than notional exposure on sub-$5 names - see margin.py.
@@ -104,6 +105,41 @@ def build_take_profit_order(ticker: str, shares: int, limit_price: float):
     order.set_duration(Duration.GOOD_TILL_CANCEL)
     order.set_session(Session.NORMAL)
     return order
+
+
+def build_stop_order(ticker: str, shares: int, stop_price: float):
+    """A resting GTC BUY_TO_COVER stop: becomes a market order at `stop_price`.
+
+    A stop, not a stop-limit, on purpose. On a squeeze these names gap, and a
+    stop-limit that the price jumps over protects nothing - the fill may be bad, but
+    the position is closed, which is the entire job of this order.
+    """
+    from schwab.orders.common import (Duration, EquityInstruction, OrderStrategyType,
+                                      OrderType, Session)
+    from schwab.orders.generic import OrderBuilder
+
+    return (OrderBuilder()
+            .set_order_type(OrderType.STOP)
+            .set_session(Session.NORMAL)
+            .set_duration(Duration.GOOD_TILL_CANCEL)
+            .set_stop_price(_fmt(stop_price))
+            .set_order_strategy_type(OrderStrategyType.SINGLE)
+            .add_equity_leg(EquityInstruction.BUY_TO_COVER, ticker, int(shares)))
+
+
+def build_exit_bracket_order(ticker: str, shares: int, take_profit_price: float,
+                             stop_price: float):
+    """Take-profit and protective stop as one-cancels-other.
+
+    They must be linked: two independent covers for the same shares can both fill,
+    and the second one opens a long.
+    """
+    from schwab.orders.common import one_cancels_other
+
+    return one_cancels_other(
+        build_take_profit_order(ticker, shares, take_profit_price),
+        build_stop_order(ticker, shares, stop_price),
+    )
 
 
 def _fmt(price: float) -> str:
@@ -164,11 +200,10 @@ class OrderManager:
             return "no share quantity (missing or invalid price)"
         price = getattr(signal, "current_price", None)
         if self.limits.min_entry_price and price and price < self.limits.min_entry_price:
-            # No measured edge below $1: 29 of 560 pooled OOS trades, mean +5.88%,
-            # t=0.46, 95% CI [-20.6%, +32.3%]. Not evidence of losses - evidence of
-            # nothing. These names also cost ~5.9x their notional in margin.
+            # A cost guard, not a verdict on the edge - see config.MIN_ENTRY_PRICE.
             return (f"entry price ${price:,.4f} below the "
-                    f"${self.limits.min_entry_price:,.2f} floor (no measured edge)")
+                    f"${self.limits.min_entry_price:,.2f} floor "
+                    f"(~6x margin; sub-$1 borrow and spread unmeasured)")
         if signal.gap_up_ok is False:
             return f"gap-up filter ({signal.gap_up_pct:.1f}%)"
         if signal.capital_ok is False:
@@ -277,6 +312,26 @@ class OrderManager:
         return self._place(build_take_profit_order(ticker, shares, limit),
                            ticker, "BUY_TO_COVER", shares, limit)
 
+    def submit_exit_bracket(self, ticker: str, shares: int, entry_fill: float,
+                            take_profit_pct: float, stop_loss_pct: float) -> OrderResult:
+        """Rest a GTC one-cancels-other pair: the take-profit and a protective stop.
+
+        The returned order id is the OCO parent, so cancelling it pulls both legs.
+        """
+        limit = round(float(entry_fill) * (1.0 - take_profit_pct), 4)
+        stop = round_to_tick(float(entry_fill) * (1.0 + stop_loss_pct), "BUY")
+        if limit <= 0 or stop <= 0:
+            return self._record(ticker, "BUY_TO_COVER", shares, Outcome.SKIPPED,
+                                "exit bracket price computed <= 0")
+        if self.mode is OrderMode.DRY_RUN:
+            return self._record(ticker, "BUY_TO_COVER", shares, Outcome.WOULD_PLACE,
+                                f"would rest GTC take-profit @ {limit} / stop @ {stop}",
+                                limit_price=limit, order_type="OCO")
+        result = self._place(build_exit_bracket_order(ticker, shares, limit, stop),
+                             ticker, "BUY_TO_COVER", shares, limit, order_type="OCO")
+        result.detail += f"; stop @ {stop}"
+        return result
+
     def submit_cover(self, ticker: str, shares: int, quote: Optional[Quote]) -> OrderResult:
         """Marketable-limit cover for the time-based exit."""
         if quote is None:
@@ -324,11 +379,12 @@ class OrderManager:
 
     # -- plumbing -------------------------------------------------------------
 
-    def _place(self, order, ticker, side, shares, limit, client_order_id=None) -> OrderResult:
+    def _place(self, order, ticker, side, shares, limit, client_order_id=None,
+               order_type=None) -> OrderResult:
         if self.client is None or self.account_hash is None:
             return self._record(ticker, side, shares, Outcome.REJECTED,
                                 "no authenticated client/account", limit_price=limit,
-                                client_order_id=client_order_id)
+                                client_order_id=client_order_id, order_type=order_type)
         try:
             resp = self.client.place_order(self.account_hash, order)
         except Exception as e:
@@ -336,22 +392,23 @@ class OrderManager:
             # REJECTED (the old behavior) could leave a real, untracked short open.
             return self._record(ticker, side, shares, Outcome.UNCERTAIN,
                                 f"submit raised ({e}) - reconcile before retrying",
-                                limit_price=limit, client_order_id=client_order_id)
+                                limit_price=limit, client_order_id=client_order_id, order_type=order_type)
 
         if resp.status_code >= 400:
             return self._record(ticker, side, shares, Outcome.REJECTED,
                                 f"broker rejected (HTTP {resp.status_code}): {resp.text[:200]}",
-                                limit_price=limit, client_order_id=client_order_id)
+                                limit_price=limit, client_order_id=client_order_id, order_type=order_type)
         return self._record(ticker, side, shares, Outcome.SUBMITTED,
                             f"submitted @ limit {limit} (HTTP {resp.status_code})",
                             order_id=extract_order_id(resp), limit_price=limit,
-                            client_order_id=client_order_id)
+                            client_order_id=client_order_id, order_type=order_type)
 
     def _record(self, ticker, side, quantity, outcome: Outcome, detail,
-                order_id=None, limit_price=None, client_order_id=None) -> OrderResult:
+                order_id=None, limit_price=None, client_order_id=None,
+                order_type=None) -> OrderResult:
         result = OrderResult(
             ticker=ticker, side=side, quantity=int(quantity or 0),
-            order_type="CANCEL" if side == "CANCEL" else "LIMIT",
+            order_type=order_type or ("CANCEL" if side == "CANCEL" else "LIMIT"),
             mode=self.mode.value, outcome=outcome.value, detail=detail,
             order_id=order_id, limit_price=limit_price, client_order_id=client_order_id,
         )

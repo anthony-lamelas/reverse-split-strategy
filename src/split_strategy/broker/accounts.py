@@ -177,6 +177,41 @@ def summarize_order(payload: dict) -> dict:
     }
 
 
+def summarize_resting_exit(payload: dict) -> dict:
+    """Has a resting exit - a lone take-profit, or a take-profit/stop OCO pair - filled?
+
+    An OCO parent carries its legs in `childOrderStrategies`; a plain order is treated
+    as a single leg. Returns `is_filled`, `is_dead` (every leg cancelled, rejected or
+    expired, so nothing is protecting the position any more), `kind` ("take_profit" or
+    "stop_loss" for the leg that filled), `avg_fill_price` and `filled_quantity`.
+    """
+    legs = payload.get("childOrderStrategies") or [payload]
+    summaries = [(leg, summarize_order(leg or {})) for leg in legs]
+    for leg, info in summaries:
+        if info["is_filled"]:
+            is_stop = (leg.get("orderType") or "").upper().startswith("STOP")
+            return {**info, "is_dead": False,
+                    "kind": "stop_loss" if is_stop else "take_profit"}
+    return {
+        "is_filled": False,
+        "is_dead": all(info["is_dead"] for _, info in summaries),
+        "kind": None,
+        "avg_fill_price": None,
+        "filled_quantity": sum(info["filled_quantity"] for _, info in summaries),
+    }
+
+
+def get_resting_exit_status(client, account_hash: str, order_id: str) -> Optional[dict]:
+    """`summarize_resting_exit` for one order id; None if the lookup fails."""
+    try:
+        resp = client.get_order(order_id, account_hash)
+        if resp.status_code >= 400:
+            return None
+        return summarize_resting_exit(resp.json() or {})
+    except Exception:
+        return None
+
+
 @dataclass
 class Discrepancy:
     ticker: str
