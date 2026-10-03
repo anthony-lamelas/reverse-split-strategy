@@ -151,6 +151,25 @@ def _settle_pending(positions, client, account_hash, report: SessionReport) -> N
                 pos["status"] = ps.OPEN
                 pos["exit_order_id"] = None
                 report.notes.append(f"{pos['ticker']}: cover {info['status'].lower()}, will retry")
+        elif status == ps.OPEN and pos.get("tp_order_id"):
+            # The resting take-profit / stop is the one order that fills while nobody
+            # is looking. Unless its fill is booked here the ledger still says OPEN,
+            # Schwab says flat, and reconciliation halts on `missing_at_broker` - on
+            # the exit that most trades are expected to take.
+            info = acct.get_resting_exit_status(client, account_hash, pos["tp_order_id"])
+            if not info:
+                continue
+            if info["is_filled"]:
+                ps.mark_closed(pos, info["avg_fill_price"], reason=info["kind"])
+                report.notes.append(
+                    f"{pos['ticker']}: {info['kind'].replace('_', ' ')} filled "
+                    f"@ {info['avg_fill_price']}")
+            elif info["is_dead"]:
+                # Cancelled or expired at the broker (a corporate action does this).
+                # Forget the id so attach_take_profits rests a fresh one this run.
+                ps.attach_take_profit(pos, None)
+                report.notes.append(
+                    f"{pos['ticker']}: resting exit no longer working at Schwab; re-placing")
 
 
 def _flush_ledger(persist, report: SessionReport, ticker: str) -> bool:
@@ -311,11 +330,16 @@ def attach_take_profits(
     manager: OrderManager,
     report: SessionReport,
     take_profit_pct: float,
+    stop_loss_pct: Optional[float] = None,
 ) -> None:
     """Rest a GTC take-profit on any OPEN position that lacks one.
 
     Runs after reconciliation so it uses the real fill price. Separating this from
     entry submission is what makes the 20% target honest when the entry slipped.
+
+    With `stop_loss_pct` the take-profit is paired one-cancels-other with a protective
+    stop. If Schwab refuses the pair, the take-profit alone is rested instead: a
+    position with half its protection beats one with none, and the note says which.
     """
     if manager.mode is OrderMode.DRY_RUN:
         return
@@ -326,6 +350,22 @@ def attach_take_profits(
         shares = int(pos.get("filled_shares") or 0)
         if not fill or shares <= 0:
             continue
+        if stop_loss_pct:
+            result = manager.submit_exit_bracket(pos["ticker"], shares, float(fill),
+                                                 take_profit_pct, stop_loss_pct)
+            if result.outcome == Outcome.SUBMITTED.value:
+                ps.attach_take_profit(pos, result.order_id)
+                report.notes.append(f"{pos['ticker']}: exit bracket resting ({result.detail})")
+                continue
+            if result.outcome == Outcome.UNCERTAIN.value:
+                # It may be resting. Sending a second cover beside it could fill both.
+                report.notes.append(
+                    f"{pos['ticker']}: exit bracket submit uncertain ({result.detail}); "
+                    f"NOT placing a fallback - check open orders at Schwab")
+                continue
+            report.notes.append(
+                f"{pos['ticker']}: NO STOP - exit bracket refused ({result.detail}); "
+                f"falling back to take-profit only")
         result = manager.submit_take_profit(pos["ticker"], shares, float(fill), take_profit_pct)
         if result.outcome == Outcome.SUBMITTED.value:
             ps.attach_take_profit(pos, result.order_id)

@@ -25,6 +25,9 @@ from typing import Iterable, Optional
 
 import pandas as pd
 
+from .. import config
+from ..live import calendar as mcal
+
 PENDING_ENTRY = "PENDING_ENTRY"
 OPEN = "OPEN"
 PENDING_EXIT = "PENDING_EXIT"
@@ -106,8 +109,25 @@ def find_live_position(positions: Iterable[dict], ticker: str) -> Optional[dict]
     return None
 
 
+def cover_date(effective_date, sessions_before: Optional[int] = None) -> pd.Timestamp:
+    """The session on which a short is covered, given the split's effective date.
+
+    `planned_exit_date` in the ledger is the EFFECTIVE date; the cover goes out
+    `config.EXIT_SESSIONS_BEFORE_SPLIT` sessions earlier so the position never trades
+    through the corporate action. Raises on an unparseable date - callers decide
+    whether that means "skip" or "halt".
+    """
+    n = config.EXIT_SESSIONS_BEFORE_SPLIT if sessions_before is None else sessions_before
+    day = pd.Timestamp(effective_date).normalize()
+    if pd.isna(day):
+        raise ValueError(f"unusable effective date: {effective_date!r}")
+    for _ in range(max(int(n), 0)):
+        day = mcal.prev_trading_day(day)
+    return day
+
+
 def positions_due_for_exit(positions: Iterable[dict], as_of: Optional[pd.Timestamp] = None) -> list[dict]:
-    """OPEN positions whose planned exit date has arrived.
+    """OPEN positions whose cover date has arrived.
 
     PENDING_ENTRY is excluded: we don't know we own it yet. PENDING_EXIT is excluded:
     a cover is already working, and submitting another could over-cover into a long.
@@ -118,7 +138,7 @@ def positions_due_for_exit(positions: Iterable[dict], as_of: Optional[pd.Timesta
         if p.get("status") != OPEN:
             continue
         try:
-            exit_dt = pd.Timestamp(p["planned_exit_date"]).normalize()
+            exit_dt = cover_date(p["planned_exit_date"])
         except Exception:
             continue
         if exit_dt <= as_of:
@@ -244,7 +264,7 @@ def simulate_lifecycle(positions: list[dict], as_of: Optional[pd.Timestamp] = No
             filled += 1
         if p.get("status") in (OPEN, PENDING_EXIT):
             try:
-                exit_dt = pd.Timestamp(p["planned_exit_date"]).normalize()
+                exit_dt = cover_date(p["planned_exit_date"])
             except Exception:
                 continue
             if exit_dt <= as_of:

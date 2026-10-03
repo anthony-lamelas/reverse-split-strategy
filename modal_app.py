@@ -172,6 +172,31 @@ def trade() -> int:
         print("[modal] volume committed")
 
 
+@app.function(
+    image=image,
+    volumes={DATA_DIR: volume},
+    secrets=[secrets],
+    # 09:35 ET: after the opening cross has filled the 09:25 entries, and still inside
+    # the 09:15-09:45 entry window the session enforces.
+    schedule=modal.Cron("35 9 * * 1-5", timezone="America/New_York"),
+    timeout=600,
+    retries=0,
+)
+def post_open() -> int:
+    """Post-open follow-up. LIVE - rests real protective orders, never enters or covers.
+
+    Books the morning's entry fills, rests the take-profit/stop pair on each, and
+    records post-open quotes for the shadow book. Without it a new short would sit
+    unprotected until the next morning's run.
+    """
+    os.makedirs(f"{DATA_DIR}/logs", exist_ok=True)
+    try:
+        return _run_session(["--live", "--i-am-sure", "--followup"])
+    finally:
+        volume.commit()
+        print("[modal] volume committed")
+
+
 @app.function(image=image, volumes={DATA_DIR: volume}, secrets=[secrets], timeout=600)
 def trade_once(live: bool = False) -> int:
     """Manual off-schedule run, for testing. Expect exit 4 outside 09:15-09:45 ET."""

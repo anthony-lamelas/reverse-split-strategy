@@ -67,6 +67,16 @@ def next_trading_day(ts) -> pd.Timestamp:
     return nxt
 
 
+def prev_trading_day(ts) -> pd.Timestamp:
+    """The last session strictly before `ts`, skipping weekends and holidays."""
+    prv = pd.Timestamp(ts).normalize() - pd.Timedelta(days=1)
+    for _ in range(15):
+        if is_trading_day(prv):
+            return prv
+        prv -= pd.Timedelta(days=1)
+    return prv
+
+
 def market_open_et(ts=None) -> pd.Timestamp:
     ts = now_et() if ts is None else pd.Timestamp(ts)
     if ts.tzinfo is None:

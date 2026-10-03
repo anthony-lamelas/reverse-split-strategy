@@ -94,7 +94,19 @@ DEFAULT_ACCOUNT_SIZE = float(os.environ.get("ACCOUNT_SIZE", "10000"))
 # returns without reliably reducing drawdown), so position size is the only real
 # tail-risk lever until live behavior is confirmed against the backtest).
 TRADE_PCT = float(os.environ.get("TRADE_PCT", "0.02"))
-STOP_LOSS_PCT = 0.40      # legacy reference only - validated strategy uses NO stop
+# Protective stop, as a fraction above the entry fill. Rested at the broker as one leg
+# of a one-cancels-other pair with the take-profit (session.attach_take_profits).
+# The walk-forward preferred no stop on mean return, but without one the worst
+# backtested trade lost 299% of its notional, and a short with a capped gain and an
+# uncapped loss is not a position to leave unattended. 0 disables it.
+STOP_LOSS_PCT = float(os.environ.get("STOP_LOSS_PCT", "0.40"))
+# Cover this many sessions BEFORE the split's effective date. 1 = the open of the last
+# pre-split session. Covering on the effective date itself (0, the original rule)
+# means trading through the corporate action: the broker restates the share count
+# overnight, so the ledger no longer matches and reconciliation halts before the cover
+# is sent; a small position becomes a fraction of a share; and resting orders are
+# cancelled. Unvalidated against the backtest until the rebuilt one tests both.
+EXIT_SESSIONS_BEFORE_SPLIT = int(os.environ.get("EXIT_SESSIONS_BEFORE_SPLIT", "1"))
 # Skip entry if it gaps up more than this vs the prior close. Default: NO filter.
 # The walk-forward selected max_gap_up=inf in 9 of 11 folds (0.30 only in the two
 # earliest, smallest-training-set folds) - see analysis/walk_forward_results.md.
@@ -169,13 +181,13 @@ FEE_RATES_VERIFIED = os.environ.get("FEE_RATES_VERIFIED", "").strip().lower() in
 # $50 regardless of equity, and unlike a CLI flag it cannot be forgotten on one run.
 MAX_TRADE_NOTIONAL = float(os.environ.get("MAX_TRADE_NOTIONAL", "0")) or None
 
-# Minimum entry price. Below $1 the strategy has no MEASURED edge: across 560
-# pooled out-of-sample trades the sub-$1 bucket held just 29 of them, mean
-# +5.88% with a t-stat of 0.46 and a 95% CI of [-20.6%, +32.3%] - indistinguishable
-# from zero. That is a sample-size problem rather than evidence of losses, but
-# trading it is a bet on an unmeasured effect, and those names also carry a ~5.9x
-# margin multiple (FINRA's $2.50/share floor) versus 0.4x above $1.
-# Excluding them keeps 95% of backtested trades and RAISES the t-stat 14.43 -> 17.05.
+# Minimum entry price. NOT because sub-$1 lacks an edge - on reconstructed quoted
+# prices it is the better-measured half (526 trades, t=4.22, vs 257 and t=2.62 above
+# $1; analysis/deep_review_fable.md). The earlier "n=29, t=0.46" figure was computed
+# on split-adjusted panel prices and is wrong. The floor stays for two reasons that
+# are about cost, not edge: FINRA's $2.50/share minimum makes margin ~6.3x notional
+# under $1 (vs ~1.0x above), and sub-$1 borrow rates and real spreads have never been
+# measured. live/shadow.py is collecting exactly that; re-derive this from it.
 MIN_ENTRY_PRICE = float(os.environ.get("MIN_ENTRY_PRICE", "1.00"))
 
 # --- Margin (FINRA 4210(c)) ---

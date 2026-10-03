@@ -20,6 +20,9 @@ Exit codes (Task Scheduler records these as LastTaskResult):
     4  halted: ran outside the entry window (LIVE only)
     5  halted: no live quotes, so nothing could be entered or covered
     6  halted: no Schwab client, so no signal could be priced at all
+
+`--followup` is the post-open pass (09:35 ET): it books the morning's fills, rests the
+take-profit/stop pair on them, and records post-open quotes. It never enters or covers.
 """
 import argparse
 import json
@@ -36,10 +39,12 @@ from split_strategy.broker.schwab_orders import OrderManager, OrderMode, RiskLim
 from split_strategy.live import calendar as mcal
 from split_strategy.live import heartbeat
 from split_strategy.live import session as sess
+from split_strategy.live import shadow
 from split_strategy.signals import portfolio_state as ps
 from split_strategy.signals.generate import generate_signals
 
 TAKE_PROFIT_PCT = 0.20  # Strategy B
+AUDIT_COLLECTION = "trading_audit"
 
 
 def ledger_path(live: bool) -> Path:
@@ -54,8 +59,17 @@ def write_audit(report: sess.SessionReport) -> None:
     path = audit_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     entry = dict(timestamp=mcal.now_et().isoformat(), **vars(report))
+    line = json.dumps(entry, default=str)
     with open(path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(entry, default=str) + "\n")
+        fh.write(line + "\n")
+    # Mirror to MongoDB so the audit trail can be read from anywhere, not only from
+    # the host that holds the file (on Modal that is a Volume). Best-effort: the file
+    # above is the record of truth and a database hiccup must not fail a session.
+    try:
+        from split_strategy.database import get_collection
+        get_collection(AUDIT_COLLECTION).insert_one(json.loads(line))
+    except Exception as e:
+        print(f"[audit] not mirrored to MongoDB: {str(e)[:120]}")
 
 
 def send_text(subject: str, body: str) -> bool:
@@ -187,6 +201,9 @@ def _session(ctx: dict) -> int:
                     help="override account equity instead of reading it from Schwab")
     ap.add_argument("--min-confidence", default="High", choices=["High", "Medium", "Low"])
     ap.add_argument("--no-alert", action="store_true", help="suppress text messages")
+    ap.add_argument("--followup", action="store_true",
+                    help="post-open pass: book fills, rest protective orders, record "
+                         "quotes. Places no entries and no covers.")
     args = ap.parse_args()
 
     if args.login:
@@ -199,7 +216,9 @@ def _session(ctx: dict) -> int:
     mode = OrderMode.LIVE if args.live else OrderMode.DRY_RUN
     report = sess.SessionReport(mode=mode.value)
     ctx["mode"] = mode.value
-    ctx["heartbeat"] = True
+    # The heartbeat certifies the 09:25 session. A healthy follow-up must not be able
+    # to stand in for a session that failed ten minutes earlier.
+    ctx["heartbeat"] = not args.followup
 
     if check_kill_switch():
         report.halted = True
@@ -297,6 +316,25 @@ def _session(ctx: dict) -> int:
             send_text("SplitShort: HALTED", report.halt_reason[:140])
         write_audit(report)
         return 1
+
+    if args.followup:
+        # Entries go in at the open, so at 09:25 there is no fill to protect yet.
+        # Without this pass the take-profit and stop would not be rested until the
+        # next morning - a full session short with nothing behind it.
+        manager = OrderManager(mode=mode, client=client, account_hash=account_hash)
+        sess.attach_take_profits(positions, manager, report, TAKE_PROFIT_PCT,
+                                 config.STOP_LOSS_PCT)
+        ps.save_positions(path, positions)
+        if mode is OrderMode.LIVE:
+            n, err = shadow.record(shadow.POST_OPEN, client)
+            report.notes.append(f"shadow book: {n} post-open mark(s)"
+                                + (f" (error: {err})" if err else ""))
+        report.notes.insert(0, "FOLLOWUP pass")
+        write_audit(report)
+        print(f"\n[followup] {report.summary_line()}")
+        for note in report.notes:
+            print(f"  - {note}")
+        return 0
 
     committed = ps.committed_capital(positions)
     print(f"Equity ${equity:,.0f} | committed ${committed:,.0f} "
@@ -405,12 +443,19 @@ def _session(ctx: dict) -> int:
                   f"Borrow cost jumped on {names}. Consider covering early."[:140])
 
     sess.process_exits(positions, manager, quotes, report, persist=persist)
-    sess.attach_take_profits(positions, manager, report, TAKE_PROFIT_PCT)
+    sess.attach_take_profits(positions, manager, report, TAKE_PROFIT_PCT,
+                             config.STOP_LOSS_PCT)
     sess.process_entries(signals, positions, manager, quotes, report, TAKE_PROFIT_PCT,
                          persist=persist)
 
     positions = ps.prune_archive(positions)
     ps.save_positions(path, positions)
+    if mode is OrderMode.LIVE:
+        # After the ledger is safe on disk, and only in LIVE: a local dry run should
+        # not write paper candidates into the shared measurement set.
+        n, err = shadow.record(shadow.PRE_OPEN, client, signals, report.entries)
+        report.notes.append(f"shadow book: {n} pre-open mark(s)"
+                            + (f" (error: {err})" if err else ""))
     write_audit(report)
 
     # --- report -----------------------------------------------------------------

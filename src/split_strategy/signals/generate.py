@@ -34,6 +34,7 @@ from ..database import get_collection, EARLY_WARNINGS_COLLECTION
 from ..backtest.events import parse_ratio, _to_ts
 from ..backtest.shortability import load_exchange_map, MAJOR_EXCHANGES
 from ..live import calendar as mcal
+from .portfolio_state import cover_date
 from .. import config
 
 _CONF_RANK = {"low": 0, "medium": 1, "high": 2}
@@ -202,6 +203,11 @@ def generate_signals(
             continue
 
         entry_date = _next_business_day(t_ann)
+        # The cover goes out before the split (see portfolio_state.cover_date), so a
+        # split effective too soon after the filing leaves nothing to hold: the entry
+        # and the cover would be the same open.
+        if cover_date(t_split) <= entry_date:
+            continue
         if as_of < entry_date:
             status = "UPCOMING"
         elif as_of == entry_date:
