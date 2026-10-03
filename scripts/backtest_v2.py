@@ -42,6 +42,14 @@ LS_GRID = [sim.LastSessionRule(cover=c, known=k, stop=st, min_price=f)
                ("close", "next_open"), ("live", "first_open"), (None, 0.40), (None, 0.50, 1.00))]
 
 
+WAIT_PRIMARY = sim.Rule(entry="first_open", wait_for_split=True, exit_sessions_before=0,
+                        stop=None, target=None, min_price=0.50)
+WAIT_GRID = [sim.Rule(entry=e, wait_for_split=True, exit_sessions_before=0, stop=st, target=t,
+                      min_price=f)
+             for e, f, st, t in itertools.product(
+                 ("first_open", "live"), (0.50, None, 1.00), (None, 0.40), (None, 0.20))]
+
+
 def pull() -> int:
     """Export the classified filings from MongoDB through the deployed Modal app."""
     os.environ.setdefault("MODAL_PROFILE", config.MODAL_PROFILE)
@@ -113,7 +121,8 @@ def run(args) -> int:
 
     costs = sim.Costs()
     last = args.variant == "last"
-    PRIMARY, GRID = (LS_PRIMARY, LS_GRID) if last else (ANNOUNCE_PRIMARY, ANNOUNCE_GRID)
+    PRIMARY, GRID = {"last": (LS_PRIMARY, LS_GRID), "wait": (WAIT_PRIMARY, WAIT_GRID),
+                     "announce": (ANNOUNCE_PRIMARY, ANNOUNCE_GRID)}[args.variant]
     runner = sim.run_last_session if last else sim.run_rule
 
     def go(evs, rule, k=1.0):
@@ -168,9 +177,10 @@ def main() -> int:
     r.add_argument("--no-grid", action="store_true")
     r.add_argument("--start", default=None, help="ignore events entered before this date")
     r.add_argument("--end", default=None, help="ignore events entered after this date")
-    r.add_argument("--variant", choices=("announce", "last"), default="announce",
+    r.add_argument("--variant", choices=("announce", "last", "wait"), default="announce",
                    help="announce: hold from the announcement (deployed). "
-                        "last: the last-session variant")
+                        "last: the last-session variant. "
+                        "wait: hold until the split actually takes effect")
     r.add_argument("--max-events", type=int, default=0, help="most recent N events (smoke test)")
     args = ap.parse_args()
     return pull() if args.cmd == "pull" else run(args)
