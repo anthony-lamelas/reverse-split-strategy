@@ -140,6 +140,21 @@ def backfill(start: str, end: str, max_llm: int = 0) -> int:
     return subprocess.run(cmd, env=env, cwd="/app").returncode
 
 
+@app.function(image=scan_image, secrets=[secrets], timeout=600)
+def export_events_v2(definitive_only: bool = True) -> list:
+    """Read-only: the classified filings in `events_v2`, for `scripts/backtest_v2.py pull`.
+
+    Exists because MongoDB is only reachable with the secret, and the research machine
+    deliberately has no copy of it.
+    """
+    sys.path.insert(0, "/app/src")
+    from split_strategy.backtest.events import EVENTS_V2_COLLECTION
+    from split_strategy.database import get_collection
+
+    query = {"is_reverse_split": True, "is_definitive": True} if definitive_only else {}
+    return list(get_collection(EVENTS_V2_COLLECTION).find(query, {"_id": 0}))
+
+
 def _run_session(extra_args: list[str] | None = None) -> int:
     """Run the trading session as a subprocess, preserving its exit code."""
     env = {**os.environ, **ENV}
