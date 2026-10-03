@@ -42,9 +42,15 @@ class Rule:
     stop: Optional[float] = 0.40      # fraction above entry; None = no stop
     target: Optional[float] = 0.20    # fraction below entry; None = no take-profit
     min_price: Optional[float] = 1.00  # entry-price floor; None = no floor
+    #: Cover at the open of the session the split ACTUALLY takes effect, rather than
+    #: on the stated date; give up `max_wait` sessions after the stated date. Not
+    #: hindsight: that morning the stock is trading split-adjusted, which is visible.
+    wait_for_split: bool = False
+    max_wait: int = 10
 
     def label(self) -> str:
-        return (f"entry={self.entry} exit=T-{self.exit_sessions_before} "
+        exit_ = "split-open" if self.wait_for_split else f"T-{self.exit_sessions_before}"
+        return (f"entry={self.entry} exit={exit_} "
                 f"stop={self.stop} target={self.target} floor={self.min_price}")
 
 
@@ -75,6 +81,27 @@ def cover_day(t_split, sessions_before: int) -> pd.Timestamp:
     return day
 
 
+def actual_cover_day(bars: pd.DataFrame, splits: Optional[pd.DataFrame], t_split,
+                     max_wait: int) -> Optional[pd.Timestamp]:
+    """The session a `wait_for_split` trade covers on.
+
+    The first split the provider records from the day before the stated date to 15
+    days after it; failing that (postponed or cancelled), `max_wait` sessions after
+    the stated date. None when the price history ends first.
+    """
+    t_split = pd.Timestamp(t_split).normalize()
+    if splits is not None and not splits.empty:
+        when = pd.to_datetime(splits["execution_date"])
+        near = when[(when >= t_split - pd.Timedelta(days=1))
+                    & (when <= t_split + pd.Timedelta(days=15))]
+        if len(near):
+            return near.min()
+    at = bars.index.searchsorted(t_split)
+    if at >= len(bars):
+        return None
+    return bars.index[min(at + max_wait, len(bars) - 1)]
+
+
 def entry_basis(bars: pd.DataFrame, splits: Optional[pd.DataFrame], entry_day) -> pd.DataFrame:
     """`bars` from `entry_day` on, restated in entry-day dollars.
 
@@ -91,30 +118,49 @@ def entry_basis(bars: pd.DataFrame, splits: Optional[pd.DataFrame], entry_day) -
     return out
 
 
+def has_unrecorded_split(window: pd.DataFrame, t_split, ratio: float) -> bool:
+    """Does the price jump by about the announced ratio with no split to explain it?
+
+    `window` is already restated with every split the provider records, so a jump of
+    that size left in it around the effective date is a split the table is missing -
+    not a loss. Trades on such a series are refused rather than booked at -900%.
+    """
+    if not ratio == ratio or ratio <= 1:
+        return False
+    near = window[window.index >= pd.Timestamp(t_split) - pd.Timedelta(days=5)]
+    prev_close = window["Close"].shift(1).reindex(near.index)
+    return bool((near["Open"] / prev_close >= 0.7 * ratio).any())
+
+
 def simulate_trade(bars: pd.DataFrame, splits: Optional[pd.DataFrame], entry_day, t_split,
-                   rule: Rule, costs: Costs) -> tuple[Optional[dict], Optional[str]]:
-    """One short. Returns `(trade, None)` or `(None, reason_skipped)`."""
+                   rule: Rule, costs: Costs,
+                   ratio: float = float("nan")) -> tuple[Optional[dict], Optional[str]]:
+    """One short. Returns `(trade, None)` or `(None, reason_skipped)`.
+
+    Every event is traded whether or not the split went on to execute on the stated
+    date - a trader could not have known. A cover on the effective date simply reads
+    that morning's open, restated for any split the provider records by then.
+    """
     entry_day, t_split = pd.Timestamp(entry_day).normalize(), pd.Timestamp(t_split).normalize()
-    cover = cover_day(t_split, rule.exit_sessions_before)
-    if cover <= entry_day:
-        return None, "no_holding_period"
     if bars is None or bars.empty or entry_day not in bars.index:
         return None, "no_entry_bar"
+    if rule.wait_for_split:
+        cover = actual_cover_day(bars, splits, t_split, rule.max_wait)
+        if cover is None:
+            return None, "no_exit_bar"
+    else:
+        cover = cover_day(t_split, rule.exit_sessions_before)
+    if cover <= entry_day:
+        return None, "no_holding_period"
     entry_px = float(bars.loc[entry_day, "Open"])
     if not entry_px > 0:
         return None, "no_entry_bar"
     if rule.min_price and entry_px < rule.min_price:
         return None, "below_floor"
-    if rule.exit_sessions_before == 0:
-        # Covering on the effective date means reading a post-split price. Without
-        # the provider's split on that date there is no factor to undo, and an
-        # un-undone 1-for-20 looks like a 1,900% loss.
-        on_day = None if splits is None or splits.empty else splits[
-            pd.to_datetime(splits["execution_date"]) == t_split]
-        if on_day is None or on_day.empty:
-            return None, "split_not_in_table"
 
     window = entry_basis(bars, splits, entry_day)
+    if has_unrecorded_split(window, t_split, ratio):
+        return None, "unverified_jump"
     stop_px = entry_px * (1 + rule.stop) if rule.stop else None
     target_px = entry_px * (1 - rule.target) if rule.target else None
 
@@ -175,7 +221,8 @@ def run_rule(events: pd.DataFrame, bars_for: Callable[[str], pd.DataFrame],
             skipped["already_short"] += 1
             continue
         trade, why = simulate_trade(bars_for(ticker), splits_for(ticker), entry_day,
-                                    ev["t_split"], rule, costs)
+                                    ev["t_split"], rule, costs,
+                                    ev.get("ratio", float("nan")))
         if trade is None:
             skipped[why] += 1
             continue

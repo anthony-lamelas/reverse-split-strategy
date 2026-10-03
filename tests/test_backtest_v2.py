@@ -27,8 +27,9 @@ FLAT = [(2.0, 2.1, 1.9)] * 5 + [(1.9, 2.0, 1.8)] + [(1.9, 2.0, 1.8)] * 3
 RULE = sim.Rule(entry="live", exit_sessions_before=1, stop=0.40, target=0.20, min_price=1.0)
 
 
-def trade(rows, rule=RULE, costs=FREE, splits=None, entry=ENTRY, split=SPLIT):
-    return sim.simulate_trade(bars(rows), splits, entry, split, rule, costs)
+def trade(rows, rule=RULE, costs=FREE, splits=None, entry=ENTRY, split=SPLIT,
+          ratio=float("nan")):
+    return sim.simulate_trade(bars(rows), splits, entry, split, rule, costs, ratio)
 
 
 class TestSimulateTrade:
@@ -97,8 +98,13 @@ class TestSplitDayExit:
         assert t["exit_date"] == pd.Timestamp("2026-10-13")
         assert t["exit_px"] == pytest.approx(1.8) and t["gross_return"] == pytest.approx(0.10)
 
-    def test_without_the_split_record_the_trade_is_refused(self):
-        assert trade(self.ROWS, rule=self.RULE0)[1] == "split_not_in_table"
+    def test_split_sized_jump_with_no_record_is_refused_not_booked(self):
+        assert trade(self.ROWS, rule=self.RULE0, ratio=10.0)[1] == "unverified_jump"
+
+    def test_cancelled_split_is_still_traded(self):
+        # Nothing happened on the stated date: no split, no jump. A trader was in it.
+        t, why = trade(FLAT, rule=self.RULE0, ratio=10.0)
+        assert why is None and t["exit_date"] == pd.Timestamp("2026-10-13")
 
     def test_cover_before_the_split_never_reads_a_post_split_bar(self):
         t, _ = trade(self.ROWS, rule=sim.Rule(stop=None, target=None, min_price=None))
@@ -233,3 +239,25 @@ class TestLastSession:
     def test_floor(self):
         f = self.frame([(0.3, 0.31, 0.29)] * 4)
         assert self.run(f, sim.LastSessionRule(min_price=0.5))[1] == "below_floor"
+
+
+class TestWaitForSplit:
+    RULE = sim.Rule(entry="first_open", wait_for_split=True, exit_sessions_before=0,
+                    stop=None, target=None, min_price=None)
+
+    def test_covers_the_morning_the_split_takes_effect_even_if_late(self):
+        # Stated 2026-10-13; the provider records it one session later.
+        rows = [(2.0, 2.1, 1.9)] * 7 + [(17.0, 18.0, 16.0)] * 3
+        splits = splits_to_frame([{"execution_date": "2026-10-14", "split_from": 10, "split_to": 1}])
+        t, why = trade(rows, rule=self.RULE, splits=splits, ratio=10.0)
+        assert why is None and t["exit_date"] == pd.Timestamp("2026-10-14")
+        assert t["exit_px"] == pytest.approx(1.7)
+
+    def test_cancelled_split_is_covered_after_the_wait(self):
+        rows = [(2.0, 2.1, 1.9)] * 30
+        t, why = trade(rows, rule=self.RULE, ratio=10.0)
+        # Stated 2026-10-13 is the 7th bar; ten sessions later is 2026-10-27.
+        assert why is None and t["exit_date"] == pd.Timestamp("2026-10-27")
+
+    def test_history_ending_before_the_stated_date_cannot_be_closed(self):
+        assert trade([(2.0, 2.1, 1.9)] * 3, rule=self.RULE)[1] == "no_exit_bar"
