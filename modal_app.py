@@ -30,7 +30,8 @@ Design notes
 
 Usage
 -----
-    modal deploy modal_app.py             # deploy the scheduled trading run
+    modal deploy modal_app.py             # deploy the scheduled scan + trading run
+    modal run modal_app.py::scan          # run the EDGAR scan once (never trades)
     modal run modal_app.py::trade_once    # run once, off-schedule (expect exit 4)
     modal volume ls split-strategy-data   # inspect persisted state
 """
@@ -55,7 +56,8 @@ volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 #       SCHWAB_APP_KEY=... SCHWAB_APP_SECRET=... MONGODB_URI=... \
 #       SMTP_HOST=... SMTP_PORT=587 SMTP_USER=... SMTP_PASSWORD=... \
 #       ALERT_EMAIL_TO=... SEC_USER_AGENT="Name email@example.com" \
-#       SCHWAB_CALLBACK_URL=https://127.0.0.1:8182
+#       SCHWAB_CALLBACK_URL=https://127.0.0.1:8182 OPENAI_API_KEY=...
+# OPENAI_API_KEY is only read by `scan` (the LLM filing classifier).
 secrets = modal.Secret.from_name("split-strategy-secrets")
 
 # `add_local_dir` must be the LAST step on an image: Modal mounts local files at
@@ -83,6 +85,43 @@ ENV = {
     "LOG_DIR": f"{DATA_DIR}/logs",
     "SCHWAB_TOKEN_PATH": f"{DATA_DIR}/.schwab_token.json",
 }
+
+
+# The scanner needs three packages the trading path does not. They go in their own
+# image so the one that places real orders at 09:25 stays as small as it was.
+scan_image = _with_source(_base.pip_install(
+    "requests>=2.31.0", "beautifulsoup4>=4.12.0", "openai>=1.52.0"))
+
+
+@app.function(
+    image=scan_image,
+    secrets=[secrets],
+    # 08:15 ET, 70 minutes ahead of the trading run. A signal can only be entered on
+    # the session after its filing, so the scan has to land BEFORE 09:25 - and the
+    # GitHub Actions cron that used to be the only scanner started 4-8 hours late
+    # through September 2026, after the run it feeds. Every signal that arrived late
+    # was HOLDING by the next morning and could never be traded. GitHub cron has no
+    # start-time guarantee; this does.
+    schedule=modal.Cron("15 8 * * 1-5", timezone="America/New_York"),
+    timeout=1800,
+    retries=1,  # idempotent: hits are upserted by filing URL
+)
+def scan() -> int:
+    """Scan EDGAR for definitive reverse-split filings and write them to MongoDB.
+
+    Never trades and never touches the Volume. Needs OPENAI_API_KEY, MONGODB_URI and
+    SEC_USER_AGENT in the secret; without the first it exits 1 and says so.
+    """
+    env = {**os.environ, "PYTHONPATH": "/app/src"}
+    cmd = [sys.executable, "/app/scripts/scan_early_edgar.py"]
+    print(f"$ {' '.join(cmd)}")
+    code = subprocess.run(cmd, env=env, cwd="/app").returncode
+    print(f"[modal] scan exited {code}")
+    if code:
+        # Raise so Modal marks the run failed (and retries once) instead of
+        # recording a success that wrote nothing.
+        raise RuntimeError(f"early EDGAR scan exited {code}")
+    return code
 
 
 def _run_session(extra_args: list[str] | None = None) -> int:
