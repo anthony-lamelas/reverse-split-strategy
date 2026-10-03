@@ -84,7 +84,7 @@ def process_filing(filing: dict) -> dict:
                 return None
             
             # Filter out past splits based on confidence or explicit logic
-            if analysis.get("is_future_split") is False:
+            if not scanner.split_is_ahead(analysis, filing['date_filed']):
                  print(f"    LLM says: Past split (is_future_split=False). Skipping.")
                  return None
 

@@ -98,7 +98,7 @@ class TestExecutableEvents:
         assert row["entry_live"] == pd.Timestamp("2026-10-02")
 
     def test_proposals_past_splits_and_non_splits_are_dropped(self):
-        docs = [doc(adsh="a", is_definitive=False), doc(adsh="b", is_future_split=False),
+        docs = [doc(adsh="a", is_definitive=False), doc(adsh="b", effective_date="2026-09-30"),
                 doc(adsh="c", is_reverse_split=False), doc(adsh="d", confidence="Medium")]
         assert executable_events(docs).empty
 
@@ -177,3 +177,19 @@ class TestReverseFactor:
         from split_strategy.backtest.events import reverse_factor
         assert reverse_factor("Unknown") != reverse_factor("Unknown")
         assert reverse_factor("1-for-1") != reverse_factor("1-for-1")
+
+
+class TestFutureIsDecidedFromDates:
+    def test_llm_past_flag_does_not_drop_a_split_that_is_still_ahead(self):
+        assert len(executable_events([doc(is_future_split=False)])) == 1
+
+    def test_scanner_trusts_dates_over_the_flag(self):
+        assert scanner.split_is_ahead({"effective_date": "2022-02-04", "is_future_split": False}, "20220126")
+        assert not scanner.split_is_ahead({"effective_date": "2022-01-20", "is_future_split": True}, "20220126")
+
+    def test_scanner_falls_back_to_the_flag_without_a_date(self):
+        assert not scanner.split_is_ahead({"effective_date": "Unknown", "is_future_split": False}, "20220126")
+        assert scanner.split_is_ahead({"effective_date": "Unknown", "is_future_split": True}, "20220126")
+
+    def test_placeholder_tickers_are_dropped(self):
+        assert executable_events([doc(ticker="NONE")]).empty
