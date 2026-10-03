@@ -2,7 +2,13 @@ name: Nightly Split Collector
 
 on:
   schedule:
-    - cron: "0 9 * * *" # 09:00 UTC (05:00 AM EST)
+    # 04:17 UTC = 00:17 EDT / 23:17 EST. GitHub starts scheduled workflows late, and
+    # through September 2026 this job (then at 09:00 UTC) began 4-8 hours late - after
+    # the 09:25 ET trading run it feeds. A signal can only be entered on the session
+    # after its filing, so every one that landed late was lost. Early and off the top
+    # of the hour leaves room for that delay. The Modal `scan` function in
+    # modal_app.py is the on-time path; this one is the backup and runs the scrapers.
+    - cron: "17 4 * * *"
   workflow_dispatch: # Allow manual triggering from GitHub Actions tab
 
 jobs:

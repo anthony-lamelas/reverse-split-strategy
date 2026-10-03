@@ -196,3 +196,12 @@ class TestGroundTruthDedupe:
         s.schwab_is_shortable = None
         assert log_shortability_ground_truth([s], path) == 0
         assert not path.exists()
+
+
+class TestEntryDateSkipsHolidays:
+    def test_friday_before_labor_day_enters_tuesday(self):
+        # 2026-09-07 is Labor Day. Landing the entry on it lost the trade outright.
+        assert _next_business_day(pd.Timestamp("2026-09-04")) == pd.Timestamp("2026-09-08")
+
+    def test_day_before_thanksgiving_enters_friday(self):
+        assert _next_business_day(pd.Timestamp("2026-11-25")) == pd.Timestamp("2026-11-27")

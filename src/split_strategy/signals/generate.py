@@ -33,6 +33,7 @@ import pandas as pd
 from ..database import get_collection, EARLY_WARNINGS_COLLECTION
 from ..backtest.events import parse_ratio, _to_ts
 from ..backtest.shortability import load_exchange_map, MAJOR_EXCHANGES
+from ..live import calendar as mcal
 from .. import config
 
 _CONF_RANK = {"low": 0, "medium": 1, "high": 2}
@@ -70,10 +71,14 @@ class Signal:
 
 
 def _next_business_day(ts: pd.Timestamp) -> pd.Timestamp:
-    nxt = ts + pd.Timedelta(days=1)
-    while nxt.weekday() >= 5:  # Sat/Sun
-        nxt += pd.Timedelta(days=1)
-    return nxt
+    """The next market session after `ts` - weekends AND exchange holidays skipped.
+
+    Skipping weekends only put the entry date of a filing made on the Friday before
+    Labor Day on the holiday itself. The live run does nothing on a closed market, and
+    by Tuesday the signal was HOLDING, which never opens a position - so the trade was
+    lost without a single filter rejecting it.
+    """
+    return mcal.next_trading_day(ts)
 
 
 def apply_pricing(

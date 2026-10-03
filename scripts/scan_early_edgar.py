@@ -29,7 +29,8 @@ from split_strategy.edgar.client import (
     download_filing_text, 
     get_cik_mapping_with_names
 )
-from split_strategy.edgar.utils import normalize_cik
+from split_strategy.edgar.utils import normalize_cik, primary_ticker_by_cik, scan_target_dates
+from split_strategy.live import calendar as mcal
 from split_strategy.edgar.llm_analysis import analyze_with_llm, check_keywords_extensive
 
 
@@ -41,11 +42,7 @@ CACHE_CIK_TO_TICKER = {}
 def load_ticker_mapping():
     """Load CIK to Ticker mapping"""
     mappings = get_cik_mapping_with_names()
-    ticker_map = mappings.get("ticker", {})
-    
-    for ticker, cik in ticker_map.items():
-        CACHE_CIK_TO_TICKER[cik] = ticker
-        CACHE_CIK_TO_TICKER[str(int(cik))] = ticker
+    CACHE_CIK_TO_TICKER.update(primary_ticker_by_cik(mappings.get("ticker", {})))
 
 def resolve_ticker(cik: str) -> str:
     normalized_cik = str(int(cik))
@@ -161,10 +158,9 @@ def main():
             print(f"Invalid date format: {args.date}. Use YYYY-MM-DD.")
             sys.exit(1)
     else:
-        # Scan both today and yesterday in EST
-        today_ny = now_ny.date()
-        yesterday_ny = today_ny - timedelta(days=1)
-        target_dates = [yesterday_ny, today_ny]
+        # Everything since the last market session, through today (ET) - so a
+        # Monday run still picks up Friday's filings.
+        target_dates = scan_target_dates(now_ny.date(), mcal.is_trading_day)
         
     for target_date in target_dates:
         print(f"\nStarting Early Edgar Scan for {target_date.strftime('%Y-%m-%d')}...")
