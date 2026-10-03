@@ -62,6 +62,12 @@ STOP_TRADING = os.environ.get("STOP_TRADING", "").strip().lower() in ("1", "true
 # OpenAI Configuration
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
+# Polygon (Massive) market data - research only, never read by the trading path.
+POLYGON_API_KEY = os.environ.get("POLYGON_API_KEY")
+# Seconds between requests. 12.5 keeps the free tier's 5 calls/minute; set to 0 on a
+# paid plan, which is unlimited.
+POLYGON_MIN_INTERVAL = float(os.environ.get("POLYGON_MIN_INTERVAL", "12.5"))
+
 # HTTP Headers
 HEADERS = {
     "User-Agent": SEC_USER_AGENT,

@@ -68,3 +68,8 @@ DATA/events_combined_cache.pkl
 .pytest_cache/
 htmlcov/
 tests/verify.log
+
+# Backtest v2 research data. The price cache comes from a licensed provider whose
+# terms forbid redistribution; the event export is reproducible from MongoDB.
+DATA/prices_v2/
+DATA/events_v2.json
