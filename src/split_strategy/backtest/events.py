@@ -204,12 +204,14 @@ def executable_events(docs, min_confidence: str = "High") -> pd.DataFrame:
     for d in docs:
         if not (d.get("is_reverse_split") and d.get("is_definitive")):
             continue
-        if d.get("is_future_split") is False:
-            continue
+        # NOT the classifier's `is_future_split`: it calls a split "past" when the date
+        # is old relative to the model's own sense of today, which dropped ~85% of
+        # valid 2022 events and ~13% of 2025's. Whether the split was still ahead is
+        # decided below, from the filing's dates.
         if conf_rank.get(str(d.get("confidence", "")).lower(), -1) < min_rank:
             continue
         ticker = d.get("ticker")
-        if not ticker or ticker == "UNKNOWN":
+        if not ticker or str(ticker).upper() in ("UNKNOWN", "NONE", "N/A"):
             continue
         t_filed = _to_ts(d.get("filing_date"))
         t_split = _to_ts(d.get("effective_date"))

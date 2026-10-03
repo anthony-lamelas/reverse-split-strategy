@@ -186,3 +186,50 @@ class TestPolygonParsing:
         assert len(calls) == 1
         src.daily("ABC", "2026-09-01", "2026-10-02")   # wider: must re-fetch
         assert len(calls) == 2
+
+
+class TestLastSession:
+    # Effective Tue 2026-10-13, so the last session is Mon 2026-10-12.
+    # bars: (open, high, low), close == open in the helper; set closes explicitly.
+    def frame(self, rows):
+        f = bars(rows, start="2026-10-08")   # Thu 8, Fri 9, Mon 12, Tue 13
+        return f
+
+    def run(self, f, rule=sim.LastSessionRule(), known="2026-10-06", splits=None, ratio=10.0):
+        return sim.simulate_last_session(f, splits, known, "2026-10-13", rule, FREE, ratio)
+
+    def test_shorts_the_open_and_covers_the_close_of_the_session_before_the_split(self):
+        f = self.frame([(2.0, 2.1, 1.9)] * 4)
+        f.loc["2026-10-12", ["Open", "Close"]] = [2.0, 1.8]
+        t, why = self.run(f)
+        assert why is None and t["entry_date"] == t["exit_date"] == pd.Timestamp("2026-10-12")
+        assert t["gross_return"] == pytest.approx(0.10) and t["days"] == 1
+
+    def test_filing_not_yet_known_that_morning_is_not_traded(self):
+        f = self.frame([(2.0, 2.1, 1.9)] * 4)
+        assert self.run(f, known="2026-10-13")[1] == "announced_too_late"
+
+    def test_next_open_cover_undoes_a_recorded_split(self):
+        f = self.frame([(2.0, 2.1, 1.9)] * 3 + [(17.0, 18.0, 16.0)])
+        splits = splits_to_frame([{"execution_date": "2026-10-13", "split_from": 10, "split_to": 1}])
+        t, _ = self.run(f, sim.LastSessionRule(cover="next_open"), splits=splits)
+        assert t["exit_px"] == pytest.approx(1.7) and t["gross_return"] == pytest.approx(0.15)
+
+    def test_split_sized_jump_with_no_record_is_refused_not_booked(self):
+        f = self.frame([(2.0, 2.1, 1.9)] * 3 + [(17.0, 18.0, 16.0)])
+        assert self.run(f, sim.LastSessionRule(cover="next_open"))[1] == "unverified_jump"
+
+    def test_postponed_split_is_still_a_trade(self):
+        # No split executed and no jump: an ordinary overnight move, kept in the sample.
+        f = self.frame([(2.0, 2.1, 1.9)] * 3 + [(2.2, 2.3, 2.1)])
+        t, why = self.run(f, sim.LastSessionRule(cover="next_open"))
+        assert why is None and t["gross_return"] == pytest.approx(-0.10)
+
+    def test_intraday_stop(self):
+        f = self.frame([(2.0, 2.1, 1.9)] * 2 + [(2.0, 3.0, 1.9), (2.0, 2.1, 1.9)])
+        t, _ = self.run(f, sim.LastSessionRule(stop=0.40))
+        assert t["exit_reason"] == "stop" and t["gross_return"] == pytest.approx(-0.40)
+
+    def test_floor(self):
+        f = self.frame([(0.3, 0.31, 0.29)] * 4)
+        assert self.run(f, sim.LastSessionRule(min_price=0.5))[1] == "below_floor"

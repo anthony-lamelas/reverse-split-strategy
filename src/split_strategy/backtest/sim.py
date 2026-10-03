@@ -184,6 +184,93 @@ def run_rule(events: pd.DataFrame, bars_for: Callable[[str], pd.DataFrame],
     return pd.DataFrame(trades), skipped
 
 
+@dataclass(frozen=True)
+class LastSessionRule:
+    """Short at the open of the last session before the stated effective date.
+
+    Pre-registered in analysis/backtest_v2_preregistration.md (addendum of 2026-10-03).
+    """
+    cover: str = "close"               # "close": same session. "next_open": the next open.
+    known: str = "live"                # which entry column says the filing was known
+    stop: Optional[float] = None       # intraday stop, fraction above entry
+    min_price: Optional[float] = None
+
+    def label(self) -> str:
+        return (f"last-session cover={self.cover} known={self.known} "
+                f"stop={self.stop} floor={self.min_price}")
+
+
+def simulate_last_session(bars: pd.DataFrame, splits: Optional[pd.DataFrame], known_day,
+                          t_split, rule: LastSessionRule, costs: Costs,
+                          ratio: float = float("nan")) -> tuple[Optional[dict], Optional[str]]:
+    """One last-session short. Returns `(trade, None)` or `(None, reason_skipped)`.
+
+    Uses only what was known that morning: the stated effective date, never whether
+    the split went on to execute. For the next-open cover, a split the provider
+    records by then is undone; a jump the size of the announced ratio with NO split
+    record is refused as `unverified_jump` rather than booked as a loss of that size.
+    """
+    effective = pd.Timestamp(t_split).normalize()
+    day = mcal.prev_trading_day(effective)
+    if pd.Timestamp(known_day).normalize() > day:
+        return None, "announced_too_late"
+    if bars is None or bars.empty or day not in bars.index:
+        return None, "no_entry_bar"
+    bar = bars.loc[day]
+    entry_px = float(bar["Open"])
+    if not entry_px > 0:
+        return None, "no_entry_bar"
+    if rule.min_price and entry_px < rule.min_price:
+        return None, "below_floor"
+
+    stop_px = entry_px * (1 + rule.stop) if rule.stop else None
+    if stop_px and float(bar["High"]) >= stop_px:
+        exit_px, exit_day, reason = stop_px, day, "stop"
+    elif rule.cover == "close":
+        exit_px, exit_day, reason = float(bar["Close"]), day, "close"
+    else:
+        nxt = bars[bars.index >= effective]
+        if nxt.empty:
+            return None, "no_exit_bar"
+        exit_day, raw = nxt.index[0], float(nxt.iloc[0]["Open"])
+        factor = 1.0
+        if splits is not None and not splits.empty:
+            when = pd.to_datetime(splits["execution_date"])
+            for f in splits.loc[(when > day) & (when <= exit_day), "factor"]:
+                factor *= float(f)
+        if factor == 1.0 and ratio == ratio and raw / entry_px >= 0.7 * ratio:
+            return None, "unverified_jump"
+        exit_px, reason = raw / factor, "next_open"
+
+    half = costs.spread(entry_px) / 2.0
+    days = max((exit_day - day).days, 1)
+    fee = fee_model.entry_fees_pct(costs.notional / entry_px, entry_px) or 0.0
+    return {
+        "entry_date": day, "exit_date": exit_day, "entry_px": entry_px,
+        "exit_px": float(exit_px), "exit_reason": reason, "days": days,
+        "gross_return": (entry_px - float(exit_px)) / entry_px,
+        "net_return": ((entry_px * (1 - half) - float(exit_px) * (1 + half)) / entry_px
+                       - costs.borrow(entry_px) * days / 365.0 - fee),
+    }, None
+
+
+def run_last_session(events: pd.DataFrame, bars_for, splits_for, rule: LastSessionRule,
+                     costs: Costs) -> tuple[pd.DataFrame, Counter]:
+    """`run_rule` for the last-session variant."""
+    known_col = {"first_open": "entry_first_open", "live": "entry_live"}[rule.known]
+    skipped: Counter = Counter()
+    trades = []
+    for _, ev in events.sort_values("t_split").iterrows():
+        trade, why = simulate_last_session(
+            bars_for(ev["ticker"]), splits_for(ev["ticker"]), ev[known_col], ev["t_split"],
+            rule, costs, ev.get("ratio", float("nan")))
+        if trade is None:
+            skipped[why] += 1
+            continue
+        trades.append({"ticker": ev["ticker"], **trade})
+    return pd.DataFrame(trades), skipped
+
+
 def placebo_events(events: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame:
     """The same dates on the wrong tickers.
 

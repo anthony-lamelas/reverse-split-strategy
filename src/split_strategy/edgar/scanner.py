@@ -112,6 +112,21 @@ def fetch_submission(url: str, max_retries: int = 5) -> str:
     raise RuntimeError(f"could not fetch {url}: {last}")
 
 
+def split_is_ahead(analysis: dict, date_filed: str) -> bool:
+    """Is the split still in the future as of the filing? Decided from the dates.
+
+    The LLM's own `is_future_split` flag is not trusted when it disagrees with the
+    dates it extracted: measured over 2019-2026 it marked 13% of 2025's dated,
+    still-ahead splits as past, and most of 2022's. When no effective date can be
+    parsed there is nothing to check against, so the flag is all there is.
+    """
+    effective = pd.to_datetime(analysis.get("effective_date"), errors="coerce")
+    filed = pd.to_datetime(str(date_filed), errors="coerce")
+    if pd.isna(effective) or pd.isna(filed):
+        return analysis.get("is_future_split") is not False
+    return effective.normalize() > filed.normalize()
+
+
 def classify(raw: str, company_name: str, date_filed: str,
              openai_api_key: Optional[str]) -> Optional[dict]:
     """Run the live keyword filter and LLM classifier over one submission.
