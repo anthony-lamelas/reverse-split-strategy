@@ -140,6 +140,27 @@ costs with the bootstrap CI lower bound above zero, and fewer than 5% of placebo
 reaching it. Trades that cannot be closed at a known price are reported with the
 result re-stated assuming each lost 100%.
 
+## Holdout result, 2026-10-03 — run once, as written
+
+Oct 2025 – Oct 2026: 438 executable events, 138 trades under the candidate.
+
+| | Result | Criterion | |
+|---|---|---|---|
+| Mean net per trade, 1× costs | +3.59%, CI [+0.59%, +6.62%] | CI lower bound > 0 | pass |
+| Placebo runs reaching it | 100 of 200 (placebo mean +1.81%) | fewer than 10 | **fail** |
+| Before costs / at 2× costs | +7.90% / −0.72% | — | |
+| $5,000 account, 2% sizing | +10.1%/yr | — | |
+
+On the development window the same placebo test gave 0 of 200 (placebo mean −1.78%).
+So the candidate made money in the held-out year, but so did shorting other
+reverse-split stocks on the same dates: the year does not show the announcement adding
+anything. Nine trades could not be closed in the data - five have a split date still
+ahead, four are ticker changes at the split whose last close was near the entry price.
+
+**Verdict: not confirmed.** One criterion passed, one failed, and the result does not
+survive doubled costs. The held-out year is now spent; the only clean test left is
+forward, through the shadow book.
+
 ## Go / no-go (Gate 3)
 
 Go only if, for the primary rule on the development window at 1× costs:
