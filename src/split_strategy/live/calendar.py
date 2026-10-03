@@ -77,6 +77,20 @@ def prev_trading_day(ts) -> pd.Timestamp:
     return prv
 
 
+def first_open_after(ts) -> pd.Timestamp:
+    """The session whose 09:30 open is the first one after `ts` (Eastern, naive).
+
+    A filing accepted at 08:00 on a trading day can be traded at that day's open; one
+    accepted at 09:30 or later, or on a closed day, waits for the next session.
+    Returns the session date at midnight.
+    """
+    ts = pd.Timestamp(ts)
+    day = ts.normalize()
+    if is_trading_day(day) and ts < day + pd.Timedelta(hours=9, minutes=30):
+        return day
+    return next_trading_day(day)
+
+
 def market_open_et(ts=None) -> pd.Timestamp:
     ts = now_et() if ts is None else pd.Timestamp(ts)
     if ts.tzinfo is None:
