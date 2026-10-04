@@ -1,0 +1,58 @@
+days 1002 (2021-10-04..2025-09-30), common stocks 7719
+  SPY buy and hold: +55.4% total, +11.7% a year (price only, no dividends)
+  QQQ buy and hold: +70.3% total, +14.3% a year (price only, no dividends)
+
+insider purchases by officers/directors of $10k+: 29644 (after matching to listed common stocks)
+
+=== 1. INSIDER BUYING (buy next open after the filing)
+
+3+ insiders, $100,000+ within 30 days; price>=$2, $500k+/day: 1217 signals
+  hold  20d: n= 1201 stock +0.09% SPY +0.53% extra -0.44% (median -1.09%) beat SPY 45% t(by month) +0.47 | by year 2021:-5.3% 2022:-0.3% 2023:+1.1% 2024:-0.2% 2025:-0.9%
+  hold  60d: n= 1148 stock +3.54% SPY +2.77% extra +0.77% (median -2.42%) beat SPY 44% t(by month) +0.61 | by year 2021:-7.5% 2022:+3.9% 2023:-1.1% 2024:+1.9% 2025:+0.5%
+  hold 120d: n= 1067 stock +0.44% SPY +3.52% extra -3.08% (median -6.07%) beat SPY 40% t(by month) -1.52 | by year 2021:-10.7% 2022:-0.3% 2023:-4.8% 2024:-3.4% 2025:+1.0%
+
+2+ insiders, $100,000+ within 30 days; price>=$2, $500k+/day: 2408 signals
+  hold  20d: n= 2378 stock +0.13% SPY +0.61% extra -0.48% (median -1.30%) beat SPY 45% t(by month) +0.34 | by year 2021:-4.0% 2022:-0.3% 2023:-0.3% 2024:+0.2% 2025:+0.0%
+  hold  60d: n= 2271 stock +2.30% SPY +2.50% extra -0.20% (median -2.47%) beat SPY 44% t(by month) -0.40 | by year 2021:-7.6% 2022:+2.1% 2023:-2.2% 2024:+1.3% 2025:+1.0%
+  hold 120d: n= 2131 stock +0.11% SPY +3.71% extra -3.60% (median -6.42%) beat SPY 40% t(by month) -4.27 | by year 2021:-11.6% 2022:-1.4% 2023:-6.7% 2024:+0.1% 2025:-2.1%
+
+3+ insiders, $500,000+ within 30 days; price>=$2, $500k+/day: 699 signals
+  hold  20d: n=  686 stock +0.27% SPY +0.61% extra -0.34% (median -1.24%) beat SPY 45% t(by month) +0.25 | by year 2021:-5.3% 2022:-0.8% 2023:+2.4% 2024:-0.1% 2025:-0.7%
+  hold  60d: n=  654 stock +3.90% SPY +2.53% extra +1.37% (median -2.34%) beat SPY 44% t(by month) +0.17 | by year 2021:-8.6% 2022:+6.1% 2023:+2.5% 2024:-0.3% 2025:-1.7%
+  hold 120d: n=  599 stock +0.40% SPY +3.32% extra -2.92% (median -7.07%) beat SPY 38% t(by month) -2.03 | by year 2021:-12.3% 2022:-0.4% 2023:-0.9% 2024:-5.4% 2025:-2.1%
+
+3+ insiders, $100k+; bigger stocks only (price>=$5, $5M+/day): 662 signals
+  hold  20d: n=  653 stock -0.00% SPY +0.58% extra -0.58% (median -0.98%) beat SPY 46% t(by month) -0.50 | by year 2021:-4.1% 2022:+0.1% 2023:+1.0% 2024:-1.8% 2025:-0.9%
+  hold  60d: n=  616 stock +3.32% SPY +2.76% extra +0.56% (median -1.64%) beat SPY 45% t(by month) +0.13 | by year 2021:-5.1% 2022:+4.7% 2023:+0.5% 2024:-0.1% 2025:-2.5%
+  hold 120d: n=  572 stock +0.33% SPY +3.78% extra -3.46% (median -5.17%) beat SPY 41% t(by month) -3.60 | by year 2021:-5.1% 2022:-1.2% 2023:-4.1% 2024:-6.1% 2025:-1.6%
+
+CEO/CFO buys $100k+; price>=$2, $500k+/day: 2442 signals
+  hold  20d: n= 2407 stock -0.16% SPY +0.71% extra -0.86% (median -1.51%) beat SPY 43% t(by month) -1.35 | by year 2021:-3.9% 2022:-0.9% 2023:-0.2% 2024:-0.9% 2025:-0.3%
+  hold  60d: n= 2295 stock +0.47% SPY +2.37% extra -1.91% (median -3.11%) beat SPY 43% t(by month) -2.78 | by year 2021:-7.7% 2022:+0.1% 2023:-1.9% 2024:-1.3% 2025:-3.9%
+  hold 120d: n= 2159 stock -1.15% SPY +3.77% extra -4.92% (median -8.95%) beat SPY 36% t(by month) -3.17 | by year 2021:-12.1% 2022:-3.6% 2023:-5.5% 2024:-2.0% 2025:-7.5%
+
+=== 2. BIG JUMP ON BIG VOLUME (buy next open)
+
+opened 8%+ higher, closed above the open, 3x volume; price>=$5, $5M+/day: 1876 signals
+  hold   5d: n= 1868 stock -0.09% SPY +0.40% extra -0.49% (median -0.52%) beat SPY 47% t(by month) -0.66 | by year 2021:-0.6% 2022:+1.3% 2023:-0.6% 2024:-1.0% 2025:-1.2%
+  hold  20d: n= 1841 stock -0.20% SPY +1.09% extra -1.28% (median -1.67%) beat SPY 44% t(by month) -2.07 | by year 2021:-8.7% 2022:+0.5% 2023:-0.9% 2024:-1.3% 2025:-1.3%
+  hold  60d: n= 1692 stock -1.21% SPY +2.27% extra -3.48% (median -5.47%) beat SPY 38% t(by month) -2.50 | by year 2021:-18.3% 2022:-1.3% 2023:-2.1% 2024:-2.6% 2025:-4.6%
+
+opened 15%+ higher, closed above the open, 3x volume; price>=$5, $5M+/day: 681 signals
+  hold   5d: n=  679 stock +0.09% SPY +0.45% extra -0.36% (median -0.05%) beat SPY 50% t(by month) +0.06 | by year 2021:+0.2% 2022:+2.9% 2023:-0.9% 2024:-1.6% 2025:-1.1%
+  hold  20d: n=  664 stock +0.34% SPY +1.03% extra -0.69% (median -0.84%) beat SPY 47% t(by month) -1.27 | by year 2021:-10.4% 2022:+2.3% 2023:+0.8% 2024:-2.5% 2025:-0.4%
+  hold  60d: n=  606 stock -0.40% SPY +2.38% extra -2.78% (median -4.96%) beat SPY 42% t(by month) -1.82 | by year 2021:-22.2% 2022:-0.5% 2023:-1.5% 2024:-3.2% 2025:-1.6%
+
+for contrast: opened 8%+ LOWER on 3x volume (buying the drop): 3464 signals
+  hold   5d: n= 3449 stock +0.06% SPY +0.46% extra -0.40% (median -0.74%) beat SPY 46% t(by month) -0.31 | by year 2021:-1.7% 2022:+0.1% 2023:-1.2% 2024:-0.5% 2025:+0.3%
+  hold  20d: n= 3412 stock -0.24% SPY +1.17% extra -1.40% (median -2.10%) beat SPY 43% t(by month) -0.33 | by year 2021:-10.8% 2022:-0.7% 2023:-1.8% 2024:-1.8% 2025:+1.6%
+  hold  60d: n= 3225 stock -1.11% SPY +2.45% extra -3.57% (median -4.98%) beat SPY 39% t(by month) -2.66 | by year 2021:-20.6% 2022:-0.2% 2023:-4.5% 2024:-4.4% 2025:+1.2%
+
+=== 3. MOMENTUM (each month, buy last year's biggest winners, hold a month)
+  months 33, stocks ranked each month ~2191
+  top10pct     +11.6% a year | monthly extra vs SPY -0.42% t -0.59 | worst month -12.3% | beat SPY in 45% of months
+  top20        +12.4% a year | monthly extra vs SPY -0.05% t -0.04 | worst month -18.4% | beat SPY in 48% of months
+  bottom10pct   -0.8% a year | monthly extra vs SPY -1.23% t -1.08 | worst month -13.6% | beat SPY in 33% of months
+  all           +7.4% a year | monthly extra vs SPY -0.80% t -1.61 | worst month -8.2% | beat SPY in 30% of months
+  spy          +19.1% a year | monthly extra vs SPY +0.00% t +nan | worst month -6.5% | beat SPY in 0% of months
+  by year, top 10% minus SPY: {2022: '-3.91%', 2023: '-0.63%', 2024: '+0.41%', 2025: '-0.49%'}

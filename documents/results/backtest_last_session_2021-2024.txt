@@ -1,0 +1,40 @@
+Development window: 496 executable events, 422 tickers, 2021-12-03 .. 2024-09-30
+Tickers with no price history: 2 of 422 (ARR-PRC, UPH.BC)
+
+== PRIMARY: last-session cover=close known=live stop=None floor=None
+  costs x0: n= 363  net  +1.26%  t=+1.90  CI [-0.08%, +2.52%]  win 59%  gross +1.67%  hold 1.0d
+  costs x1: n= 363  net  -3.78%  t=-5.50  CI [-5.16%, -2.48%]  win 33%  gross +1.67%  hold 1.0d
+  costs x2: n= 363  net  -8.82%  t=-12.29  CI [-10.27%, -7.47%]  win 15%  gross +1.67%  hold 1.0d
+  skipped: {'no_entry_bar': 47, 'announced_too_late': 86}
+  exits: {'close': np.int64(363)}
+  $5,000 account, deployed caps ($50, 1/day): 246 trades, -3.0%/yr (margin-skipped 21)
+  $5,000 account, 2% of equity, no daily cap: 318 trades, -6.7%/yr (margin-skipped 45)
+
+== PLACEBO (200 ticker-shuffled runs, primary rule, costs x1)
+  real -3.78% | placebo mean -10.83%, p95 -2.45% | runs >= real: 139
+
+== SENSITIVITY GRID (costs x1) - reported in full, not searched
+  last-session cover=close known=live stop=None floor=None         n= 363  net  -3.78%  t=-5.50  CI [-5.17%, -2.46%]  win 33%  gross +1.67%  hold 1.0d
+  last-session cover=close known=live stop=None floor=0.5          n= 126  net  -1.78%  t=-2.65  CI [-3.12%, -0.46%]  win 33%  gross +1.33%  hold 1.0d
+  last-session cover=close known=live stop=None floor=1.0          n=  62  net  -1.64%  t=-2.22  CI [-3.09%, -0.19%]  win 29%  gross +0.41%  hold 1.0d
+  last-session cover=close known=live stop=0.4 floor=None          n= 363  net  -4.16%  t=-6.19  CI [-5.48%, -2.86%]  win 33%  gross +1.30%  hold 1.0d
+  last-session cover=close known=live stop=0.4 floor=0.5           n= 126  net  -1.93%  t=-2.65  CI [-3.39%, -0.53%]  win 33%  gross +1.17%  hold 1.0d
+  last-session cover=close known=live stop=0.4 floor=1.0           n=  62  net  -1.64%  t=-2.22  CI [-3.08%, -0.21%]  win 29%  gross +0.41%  hold 1.0d
+  last-session cover=close known=first_open stop=None floor=None   n= 444  net  -3.03%  t=-5.06  CI [-4.25%, -1.88%]  win 36%  gross +2.41%  hold 1.0d
+  last-session cover=close known=first_open stop=None floor=0.5    n= 150  net  -1.42%  t=-2.23  CI [-2.65%, -0.16%]  win 35%  gross +1.78%  hold 1.0d
+  last-session cover=close known=first_open stop=None floor=1.0    n=  66  net  -1.45%  t=-2.05  CI [-2.83%, -0.09%]  win 32%  gross +0.59%  hold 1.0d
+  last-session cover=close known=first_open stop=0.4 floor=None    n= 444  net  -3.35%  t=-5.68  CI [-4.51%, -2.21%]  win 36%  gross +2.10%  hold 1.0d
+  last-session cover=close known=first_open stop=0.4 floor=0.5     n= 150  net  -1.55%  t=-2.28  CI [-2.90%, -0.25%]  win 35%  gross +1.65%  hold 1.0d
+  last-session cover=close known=first_open stop=0.4 floor=1.0     n=  66  net  -1.45%  t=-2.05  CI [-2.81%, -0.06%]  win 32%  gross +0.59%  hold 1.0d
+  last-session cover=next_open known=live stop=None floor=None     n= 358  net  -1.91%  t=-2.05  CI [-3.77%, -0.13%]  win 41%  gross +3.65%  hold 2.1d
+  last-session cover=next_open known=live stop=None floor=0.5      n= 123  net  +0.87%  t=+0.68  CI [-1.47%, +3.48%]  win 40%  gross +4.03%  hold 1.8d
+  last-session cover=next_open known=live stop=None floor=1.0      n=  60  net  -0.86%  t=-0.70  CI [-3.17%, +1.58%]  win 37%  gross +1.30%  hold 2.0d
+  last-session cover=next_open known=live stop=0.4 floor=None      n= 358  net  -2.49%  t=-2.74  CI [-4.27%, -0.73%]  win 40%  gross +3.07%  hold 2.0d
+  last-session cover=next_open known=live stop=0.4 floor=0.5       n= 123  net  +0.74%  t=+0.56  CI [-1.70%, +3.42%]  win 40%  gross +3.90%  hold 1.8d
+  last-session cover=next_open known=live stop=0.4 floor=1.0       n=  60  net  -0.86%  t=-0.70  CI [-3.12%, +1.59%]  win 37%  gross +1.30%  hold 2.0d
+  last-session cover=next_open known=first_open stop=None floor=None n= 439  net  -1.04%  t=-1.29  CI [-2.63%, +0.52%]  win 45%  gross +4.48%  hold 2.0d
+  last-session cover=next_open known=first_open stop=None floor=0.5 n= 147  net  +1.07%  t=+0.96  CI [-1.01%, +3.33%]  win 44%  gross +4.33%  hold 1.8d
+  last-session cover=next_open known=first_open stop=None floor=1.0 n=  64  net  -0.48%  t=-0.40  CI [-2.74%, +1.88%]  win 38%  gross +1.67%  hold 2.1d
+  last-session cover=next_open known=first_open stop=0.4 floor=None n= 439  net  -1.52%  t=-1.92  CI [-3.10%, -0.00%]  win 44%  gross +4.01%  hold 1.9d
+  last-session cover=next_open known=first_open stop=0.4 floor=0.5 n= 147  net  +0.96%  t=+0.85  CI [-1.18%, +3.32%]  win 44%  gross +4.22%  hold 1.8d
+  last-session cover=next_open known=first_open stop=0.4 floor=1.0 n=  64  net  -0.48%  t=-0.40  CI [-2.72%, +1.88%]  win 38%  gross +1.67%  hold 2.1d

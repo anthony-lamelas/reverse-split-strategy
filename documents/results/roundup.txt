@@ -1,0 +1,14 @@
+distinct dated splits: 2146 | flagged round-up: 530
+executed and priced: 1577 | flagged round-up: 422
+cost of one share: median $0.24
+profit per split (sold 5 sessions after): median $2.70, mean $3.42, positive 99%
+by year:
+      splits  total_profit
+year                      
+2021       1           2.0
+2022      51         158.0
+2023     128         423.0
+2024     136         448.0
+2025     106         411.0
+
+flag spot-check: 34 of 40 flagged filings contain round-up wording; 5 of 25 unflagged ones do too
