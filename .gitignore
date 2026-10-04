@@ -73,3 +73,6 @@ tests/verify.log
 # terms forbid redistribution; the event export is reproducible from MongoDB.
 DATA/prices_v2/
 DATA/events_v2.json
+
+# Research inputs too large or not ours to commit (regenerate with documents/research/*)
+documents/research/data/*.pkl

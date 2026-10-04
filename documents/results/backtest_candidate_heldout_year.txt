@@ -1,0 +1,41 @@
+HOLDOUT window: 438 executable events, 346 tickers, 2025-10-01 .. 2026-10-05
+Tickers with no price history: 0 of 346
+
+== PRIMARY: entry=first_open exit=split-open stop=None target=None floor=0.5
+  costs x0: n= 138  net  +7.90%  t=+5.24  CI [+4.92%, +10.83%]  win 70%  gross +7.92%  hold 9.1d
+  costs x1: n= 138  net  +3.59%  t=+2.33  CI [+0.59%, +6.62%]  win 56%  gross +7.92%  hold 9.1d
+  costs x2: n= 138  net  -0.72%  t=-0.46  CI [-3.83%, +2.36%]  win 44%  gross +7.92%  hold 9.1d
+  skipped: {'below_floor': 268, 'no_exit_bar': 9, 'unverified_jump': 8, 'no_entry_bar': 10, 'already_short': 5}
+  if the 9 unclosable trade(s) each lost 100%: mean -2.76%
+  exits: {'time': np.int64(138)}
+  $5,000 account, deployed caps ($50, 1/day): 99 trades, +3.6%/yr (margin-skipped 2)
+  $5,000 account, 2% of equity, no daily cap: 134 trades, +10.1%/yr (margin-skipped 4)
+
+== PLACEBO (200 ticker-shuffled runs, primary rule, costs x1)
+  real +3.59% | placebo mean +1.81%, p95 +7.32% | runs >= real: 100
+
+== SENSITIVITY GRID (costs x1) - reported in full, not searched
+  entry=first_open exit=split-open stop=None target=None floor=0.5 n= 138  net  +3.59%  t=+2.33  CI [+0.56%, +6.56%]  win 56%  gross +7.92%  hold 9.1d
+  entry=first_open exit=split-open stop=None target=0.2 floor=0.5  n= 141  net  +3.29%  t=+2.51  CI [+0.73%, +5.78%]  win 59%  gross +7.06%  hold 7.5d
+  entry=first_open exit=split-open stop=0.4 target=None floor=0.5  n= 140  net  +1.50%  t=+0.84  CI [-2.07%, +4.94%]  win 54%  gross +5.82%  hold 9.0d
+  entry=first_open exit=split-open stop=0.4 target=0.2 floor=0.5   n= 143  net  +2.42%  t=+1.76  CI [-0.30%, +5.10%]  win 57%  gross +6.19%  hold 7.6d
+  entry=first_open exit=split-open stop=None target=None floor=None n= 382  net  +1.85%  t=+1.78  CI [-0.18%, +3.88%]  win 54%  gross +7.70%  hold 7.1d
+  entry=first_open exit=split-open stop=None target=0.2 floor=None n= 393  net  +1.69%  t=+1.91  CI [-0.05%, +3.42%]  win 58%  gross +6.76%  hold 5.4d
+  entry=first_open exit=split-open stop=0.4 target=None floor=None n= 387  net  -0.74%  t=-0.60  CI [-3.15%, +1.66%]  win 52%  gross +5.13%  hold 6.8d
+  entry=first_open exit=split-open stop=0.4 target=0.2 floor=None  n= 396  net  +0.18%  t=+0.18  CI [-1.86%, +2.14%]  win 57%  gross +5.27%  hold 5.3d
+  entry=first_open exit=split-open stop=None target=None floor=1.0 n=  35  net  +3.34%  t=+1.05  CI [-2.65%, +9.89%]  win 57%  gross +6.70%  hold 18.6d
+  entry=first_open exit=split-open stop=None target=0.2 floor=1.0  n=  37  net  +3.23%  t=+1.17  CI [-2.00%, +8.85%]  win 59%  gross +6.29%  hold 16.0d
+  entry=first_open exit=split-open stop=0.4 target=None floor=1.0  n=  37  net  -5.08%  t=-1.08  CI [-14.92%, +3.55%]  win 49%  gross -1.69%  hold 18.0d
+  entry=first_open exit=split-open stop=0.4 target=0.2 floor=1.0   n=  39  net  -0.47%  t=-0.14  CI [-6.90%, +5.92%]  win 54%  gross +2.63%  hold 16.2d
+  entry=live exit=split-open stop=None target=None floor=0.5       n= 130  net  +2.22%  t=+1.43  CI [-0.76%, +5.23%]  win 56%  gross +6.52%  hold 8.8d
+  entry=live exit=split-open stop=None target=0.2 floor=0.5        n= 133  net  +2.30%  t=+1.64  CI [-0.43%, +4.97%]  win 59%  gross +6.08%  hold 7.3d
+  entry=live exit=split-open stop=0.4 target=None floor=0.5        n= 132  net  +0.03%  t=+0.02  CI [-3.69%, +3.48%]  win 54%  gross +4.31%  hold 8.7d
+  entry=live exit=split-open stop=0.4 target=0.2 floor=0.5         n= 135  net  +1.40%  t=+0.95  CI [-1.52%, +4.22%]  win 58%  gross +5.17%  hold 7.4d
+  entry=live exit=split-open stop=None target=None floor=None      n= 375  net  -0.18%  t=-0.18  CI [-2.10%, +1.73%]  win 48%  gross +5.68%  hold 6.5d
+  entry=live exit=split-open stop=None target=0.2 floor=None       n= 385  net  -0.30%  t=-0.35  CI [-2.01%, +1.36%]  win 51%  gross +5.01%  hold 5.4d
+  entry=live exit=split-open stop=0.4 target=None floor=None       n= 381  net  -2.82%  t=-2.34  CI [-5.19%, -0.51%]  win 46%  gross +3.06%  hold 6.2d
+  entry=live exit=split-open stop=0.4 target=0.2 floor=None        n= 389  net  -2.29%  t=-2.23  CI [-4.34%, -0.31%]  win 49%  gross +3.03%  hold 5.1d
+  entry=live exit=split-open stop=None target=None floor=1.0       n=  34  net  +4.45%  t=+1.41  CI [-1.43%, +10.78%]  win 59%  gross +7.76%  hold 18.5d
+  entry=live exit=split-open stop=None target=0.2 floor=1.0        n=  36  net  +4.45%  t=+1.60  CI [-0.78%, +10.02%]  win 61%  gross +7.42%  hold 15.7d
+  entry=live exit=split-open stop=0.4 target=None floor=1.0        n=  36  net  -4.27%  t=-0.89  CI [-14.19%, +4.47%]  win 50%  gross -0.92%  hold 17.8d
+  entry=live exit=split-open stop=0.4 target=0.2 floor=1.0         n=  38  net  +0.59%  t=+0.17  CI [-6.04%, +7.13%]  win 55%  gross +3.61%  hold 15.9d

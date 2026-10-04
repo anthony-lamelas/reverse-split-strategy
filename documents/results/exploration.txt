@@ -1,0 +1,132 @@
+Development window 2021-10-12 .. 2025-09-30: 806 executable events, 726 usable (priced, no unexplained jump)
+
+=== 1. WHEN DOES THE PRICE MOVE? (short's return per leg, before costs)
+ Sessions counted from the stated effective date E (0 = first session on/after E).
+ Only sessions on or after the announcement are included.
+  E-5  overnight into it (prev close -> open)    n= 181  mean -1.40%  median -0.08%  t -1.60  win 41%
+  E-5  during it (open -> close)                 n= 219  mean +1.40%  median +0.65%  t +2.17  win 54%
+  E-4  overnight into it (prev close -> open)    n= 219  mean -0.29%  median +0.00%  t -0.76  win 43%
+  E-4  during it (open -> close)                 n= 261  mean +1.76%  median +1.40%  t +2.87  win 60%
+  E-3  overnight into it (prev close -> open)    n= 261  mean -0.56%  median -0.04%  t -1.13  win 40%
+  E-3  during it (open -> close)                 n= 312  mean +0.92%  median +0.83%  t +1.57  win 56%
+  E-2  overnight into it (prev close -> open)    n= 312  mean -1.01%  median -0.40%  t -2.56  win 39%
+  E-2  during it (open -> close)                 n= 506  mean +2.92%  median +2.44%  t +7.31  win 64%
+  E-1  overnight into it (prev close -> open)    n= 506  mean -0.62%  median +0.00%  t -1.41  win 50%
+  E-1  during it (open -> close)                 n= 718  mean +2.76%  median +2.70%  t +6.78  win 65%
+  E+0  overnight into it (prev close -> open)    n= 718  mean +1.72%  median +1.19%  t +3.48  win 59%
+  E+0  during it (open -> close)                 n= 718  mean +0.68%  median +1.38%  t +1.26  win 56%
+  E+1  overnight into it (prev close -> open)    n= 711  mean +1.38%  median +1.54%  t +2.50  win 63%
+  E+1  during it (open -> close)                 n= 711  mean -1.40%  median +1.67%  t -0.70  win 58%
+  E+2  overnight into it (prev close -> open)    n= 707  mean +0.09%  median +0.72%  t +0.18  win 59%
+  E+2  during it (open -> close)                 n= 707  mean +0.65%  median +1.28%  t +0.98  win 57%
+  E+3  overnight into it (prev close -> open)    n= 707  mean -0.25%  median +0.31%  t -0.57  win 54%
+  E+3  during it (open -> close)                 n= 707  mean +0.16%  median +1.42%  t +0.23  win 59%
+ Sessions counted from the announcement (0 = first open after the filing).
+  announcement gap (prior close -> first open)   n= 726  mean +5.27%  median +3.10%  t +10.41  win 71%
+  A+0  during it (open -> close), still pre-split n= 726  mean +3.41%  median +3.34%  t +7.85  win 66%
+  A+1  during it (open -> close), still pre-split n= 514  mean +2.24%  median +2.69%  t +4.70  win 67%
+  A+2  during it (open -> close), still pre-split n= 318  mean +1.72%  median +1.63%  t +3.46  win 64%
+  A+3  during it (open -> close), still pre-split n= 266  mean +0.50%  median +0.76%  t +0.94  win 57%
+
+=== 2. CANDIDATE STRATEGIES (after assumed costs; halves split at 2024-01-01)
+
+ -- price floor: none
+  announce open -> E open (cover on split day)   n= 718  mean +1.53%  median +3.00%  t +1.54  win 61%  | gross +7.7% hold 8.8d | 1st half +0.9% (n=236) 2nd half +1.8% (n=482)
+    same, take-profit 20%                        n= 718  mean +1.25%  median +4.00%  t +1.34  win 64%  | gross +6.6% hold 6.4d | 1st half -0.1% (n=236) 2nd half +1.9% (n=482)
+    same, take-profit 20% + stop 40%             n= 718  mean +0.60%  median +3.63%  t +0.75  win 63%  | gross +5.9% hold 5.7d | 1st half -0.8% (n=236) 2nd half +1.3% (n=482)
+  announce open -> actual split open (wait <=10d) n= 718  mean +3.61%  median +5.30%  t +3.39  win 65%  | gross +10.0% hold 10.6d | 1st half +3.4% (n=236) 2nd half +3.7% (n=482)
+  announce open -> E-1 close                     n= 718  mean +0.18%  median +1.37%  t +0.22  win 55%  | gross +6.1% hold 5.7d | 1st half +0.7% (n=236) 2nd half -0.1% (n=482)
+  announce open -> E-1 open (deployed timing)    n= 506  mean -1.23%  median +0.63%  t -1.31  win 53%  | gross +4.8% hold 8.1d | 1st half +1.3% (n=153) 2nd half -2.3% (n=353)
+  announce open -> E close (through split day)   n= 718  mean +2.56%  median +4.42%  t +2.48  win 59%  | gross +8.7% hold 8.8d | 1st half +2.9% (n=236) 2nd half +2.4% (n=482)
+  announce open -> same-day close (reaction day) n= 718  mean -1.88%  median -1.47%  t -4.07  win 42%  | gross +3.5% hold 0.0d | 1st half -2.8% (n=236) 2nd half -1.4% (n=482)
+  announce +1 open -> E open (a session late)    n= 506  mean -0.76%  median +0.89%  t -0.70  win 53%  | gross +5.6% hold 10.3d | 1st half -0.1% (n=152) 2nd half -1.0% (n=354)
+  E-3 open -> E open                             n= 312  mean -2.03%  median -1.21%  t -1.67  win 46%  | gross +4.0% hold 7.3d | 1st half -3.3% (n=129) 2nd half -1.1% (n=183)
+  E-2 open -> E open                             n= 506  mean +0.02%  median +0.95%  t +0.02  win 53%  | gross +5.8% hold 5.0d | 1st half -3.0% (n=149) 2nd half +1.3% (n=357)
+  E-1 open -> E open                             n= 718  mean -1.25%  median -0.61%  t -1.79  win 47%  | gross +4.4% hold 3.1d | 1st half -3.2% (n=232) 2nd half -0.3% (n=486)
+  E-1 close -> E open (overnight only)           n= 718  mean -4.07%  median -3.83%  t -7.08  win 27%  | gross +1.7% hold 3.1d | 1st half -5.3% (n=232) 2nd half -3.5% (n=486)
+  E open -> E+5 open (after the split)           n= 706  mean -5.73%  median +1.86%  t -2.01  win 53%  | gross +0.7% hold 7.5d | 1st half -3.4% (n=224) 2nd half -6.8% (n=482)
+
+ -- price floor: $0.50
+  announce open -> E open (cover on split day)   n= 229  mean +4.52%  median +3.59%  t +3.79  win 66%  | gross +8.7% hold 10.9d | 1st half +4.6% (n=90) 2nd half +4.5% (n=139)
+    same, take-profit 20%                        n= 229  mean +4.39%  median +5.06%  t +4.46  win 68%  | gross +7.9% hold 7.5d | 1st half +4.0% (n=90) 2nd half +4.7% (n=139)
+    same, take-profit 20% + stop 40%             n= 229  mean +3.35%  median +3.96%  t +3.09  win 67%  | gross +6.8% hold 6.9d | 1st half +2.6% (n=90) 2nd half +3.8% (n=139)
+  announce open -> actual split open (wait <=10d) n= 229  mean +7.32%  median +6.50%  t +6.00  win 68%  | gross +11.7% hold 12.9d | 1st half +8.4% (n=90) 2nd half +6.6% (n=139)
+  announce open -> E-1 close                     n= 229  mean +3.33%  median +3.29%  t +3.29  win 62%  | gross +7.4% hold 9.2d | 1st half +4.1% (n=90) 2nd half +2.8% (n=139)
+  announce open -> E-1 open (deployed timing)    n= 181  mean +2.48%  median +2.63%  t +2.14  win 59%  | gross +6.7% hold 11.7d | 1st half +4.9% (n=67) 2nd half +1.1% (n=114)
+  announce open -> E close (through split day)   n= 229  mean +4.51%  median +4.49%  t +3.27  win 62%  | gross +8.7% hold 10.9d | 1st half +4.0% (n=90) 2nd half +4.9% (n=139)
+  announce open -> same-day close (reaction day) n= 229  mean -0.37%  median -1.01%  t -0.51  win 44%  | gross +2.9% hold 0.0d | 1st half -1.1% (n=90) 2nd half +0.1% (n=139)
+  announce +1 open -> E open (a session late)    n= 170  mean +0.22%  median +1.11%  t +0.11  win 55%  | gross +4.5% hold 12.2d | 1st half +0.6% (n=65) 2nd half +0.0% (n=105)
+  E-3 open -> E open                             n= 115  mean +1.23%  median +0.15%  t +0.98  win 50%  | gross +4.4% hold 4.2d | 1st half +2.5% (n=51) 2nd half +0.2% (n=64)
+  E-2 open -> E open                             n= 167  mean +2.29%  median +0.92%  t +1.79  win 53%  | gross +5.6% hold 3.0d | 1st half +1.3% (n=55) 2nd half +2.7% (n=112)
+  E-1 open -> E open                             n= 212  mean -0.89%  median -0.66%  t -0.75  win 45%  | gross +2.5% hold 1.6d | 1st half -1.3% (n=78) 2nd half -0.6% (n=134)
+  E-1 close -> E open (overnight only)           n= 209  mean -2.12%  median -2.24%  t -1.89  win 30%  | gross +1.3% hold 1.6d | 1st half -2.6% (n=77) 2nd half -1.8% (n=132)
+  E open -> E+5 open (after the split)           n= 196  mean +2.52%  median +3.41%  t +1.45  win 55%  | gross +6.5% hold 7.3d | 1st half +3.1% (n=73) 2nd half +2.2% (n=123)
+
+ -- price floor: $1.00
+  announce open -> E open (cover on split day)   n=  91  mean +2.90%  median +1.62%  t +1.49  win 58%  | gross +6.2% hold 16.3d | 1st half +4.2% (n=35) 2nd half +2.1% (n=56)
+    same, take-profit 20%                        n=  91  mean +2.73%  median +2.83%  t +2.04  win 60%  | gross +5.4% hold 11.4d | 1st half +1.6% (n=35) 2nd half +3.5% (n=56)
+    same, take-profit 20% + stop 40%             n=  91  mean +1.77%  median +1.62%  t +1.21  win 58%  | gross +4.4% hold 10.5d | 1st half +1.9% (n=35) 2nd half +1.7% (n=56)
+  announce open -> actual split open (wait <=10d) n=  91  mean +5.62%  median +4.92%  t +2.78  win 57%  | gross +9.1% hold 19.6d | 1st half +8.6% (n=35) 2nd half +3.7% (n=56)
+  announce open -> E-1 close                     n=  91  mean +3.62%  median +1.12%  t +2.26  win 57%  | gross +6.7% hold 14.7d | 1st half +3.9% (n=35) 2nd half +3.4% (n=56)
+  announce open -> E-1 open (deployed timing)    n=  78  mean +2.61%  median +1.81%  t +1.46  win 58%  | gross +5.9% hold 17.1d | 1st half +3.3% (n=30) 2nd half +2.2% (n=48)
+  announce open -> E close (through split day)   n=  91  mean +2.99%  median +1.69%  t +1.42  win 57%  | gross +6.2% hold 16.3d | 1st half +3.4% (n=35) 2nd half +2.7% (n=56)
+  announce open -> same-day close (reaction day) n=  91  mean +0.05%  median -1.09%  t +0.05  win 38%  | gross +2.1% hold 0.0d | 1st half -0.1% (n=35) 2nd half +0.1% (n=56)
+  announce +1 open -> E open (a session late)    n=  74  mean -0.10%  median +1.06%  t -0.04  win 57%  | gross +3.3% hold 18.0d | 1st half +3.5% (n=29) 2nd half -2.5% (n=45)
+  E-3 open -> E open                             n=  63  mean +1.88%  median +1.01%  t +1.07  win 56%  | gross +4.1% hold 4.2d | 1st half +5.2% (n=28) 2nd half -0.7% (n=35)
+  E-2 open -> E open                             n=  76  mean +1.23%  median -0.31%  t +0.62  win 47%  | gross +3.4% hold 3.0d | 1st half +3.4% (n=29) 2nd half -0.1% (n=47)
+  E-1 open -> E open                             n=  82  mean -2.12%  median -0.85%  t -1.26  win 41%  | gross -0.1% hold 1.5d | 1st half -0.4% (n=31) 2nd half -3.2% (n=51)
+  E-1 close -> E open (overnight only)           n=  78  mean -1.92%  median -1.50%  t -2.19  win 24%  | gross +0.1% hold 1.5d | 1st half -1.4% (n=31) 2nd half -2.2% (n=47)
+  E open -> E+5 open (after the split)           n=  74  mean +1.80%  median -1.08%  t +0.76  win 49%  | gross +4.3% hold 7.4d | 1st half +4.0% (n=29) 2nd half +0.4% (n=45)
+
+=== 3. WHAT KIND OF EVENT WORKS? (announce open -> E open, take-profit 20%, after costs)
+ By entry price
+     < $0.25                                     n= 269  mean +2.88%  median +8.56%  t +1.93  win 69%  | gross +9.3%
+     $0.25-0.50                                  n= 226  mean -3.93%  median +0.60%  t -1.86  win 53%  | gross +2.0%
+     $0.50-1                                     n= 133  mean +5.85%  median +6.38%  t +4.24  win 74%  | gross +9.9%
+     $1-2                                        n=  36  mean +7.75%  median +8.33%  t +4.79  win 78%  | gross +10.2%
+     $2-5                                        n=  22  mean -1.19%  median -0.78%  t -0.37  win 45%  | gross +2.0%
+     >= $5                                       n=  32  mean -0.73%  median -0.18%  t -0.34  win 50%  | gross +1.9%
+ By split ratio
+     2-5                                         n=  81  mean -1.37%  median +2.40%  t -0.74  win 58%  | gross +2.6%
+     6-10                                        n= 204  mean -2.17%  median +0.99%  t -1.03  win 55%  | gross +3.1%
+     11-20                                       n= 214  mean +3.31%  median +5.15%  t +2.19  win 70%  | gross +9.1%
+     21-50                                       n= 139  mean +3.89%  median +4.40%  t +2.12  win 64%  | gross +9.2%
+     > 50                                        n=  71  mean +3.05%  median +12.71%  t +0.87  win 77%  | gross +9.3%
+ By calendar days from entry to split
+     1-2                                         n= 243  mean +3.13%  median +3.11%  t +3.17  win 63%  | gross +8.2%
+     3-5                                         n= 218  mean -0.73%  median +3.06%  t -0.33  win 63%  | gross +5.1%
+     6-10                                        n= 131  mean +3.94%  median +7.37%  t +2.60  win 69%  | gross +8.8%
+     11-30                                       n= 106  mean -0.93%  median +7.64%  t -0.32  win 62%  | gross +4.4%
+     > 30                                        n=  20  mean -6.16%  median +2.91%  t -0.91  win 60%  | gross +1.3%
+ By typical daily dollar volume before the news
+     < $100k                                     n= 303  mean -2.65%  median +2.41%  t -1.48  win 59%  | gross +3.1%
+     $100k-500k                                  n= 226  mean +3.02%  median +4.55%  t +2.08  win 64%  | gross +8.7%
+     $500k-2M                                    n=  95  mean +4.96%  median +7.98%  t +3.03  win 78%  | gross +9.9%
+     $2M-10M                                     n=  59  mean +8.48%  median +11.28%  t +5.13  win 75%  | gross +13.0%
+     > $10M                                      n=  35  mean +1.18%  median -0.40%  t +0.68  win 49%  | gross +4.3%
+ By move on the announcement (prior close -> first open)
+     down > 10%                                  n= 179  mean +3.27%  median +7.76%  t +1.85  win 66%  | gross +8.7%
+     down 2-10%                                  n= 235  mean +0.69%  median +2.21%  t +0.40  win 62%  | gross +5.9%
+     flat                                        n= 189  mean -1.40%  median +3.72%  t -0.71  win 61%  | gross +4.3%
+     up 2-10%                                    n=  99  mean +2.30%  median +5.77%  t +1.24  win 66%  | gross +7.5%
+     up > 10%                                    n=  16  mean +11.36%  median +16.66%  t +4.40  win 81%  | gross +15.8%
+ By 5-day move before the news
+     down > 15%                                  n= 128  mean +3.62%  median +5.08%  t +2.08  win 67%  | gross +9.4%
+     down 0-15%                                  n= 331  mean +0.50%  median +3.86%  t +0.32  win 63%  | gross +6.0%
+     up 0-15%                                    n= 169  mean +2.13%  median +3.30%  t +1.77  win 62%  | gross +6.9%
+     up > 15%                                    n=  89  mean -1.14%  median +8.51%  t -0.34  win 65%  | gross +4.1%
+ By filing type
+     6-K                                         n= 218  mean -2.13%  median +3.31%  t -0.98  win 61%  | gross +3.3%
+     8-K                                         n= 500  mean +2.72%  median +4.66%  t +2.90  win 65%  | gross +8.1%
+ By when the filing arrived
+     False                                       n= 392  mean +1.89%  median +4.51%  t +1.86  win 64%  | gross +7.1%
+     True                                        n= 326  mean +0.47%  median +3.82%  t +0.29  win 64%  | gross +6.0%
+ By whether the split happened on/near the stated date
+     False                                       n=  38  mean -14.80%  median +6.09%  t -1.36  win 58%  | gross -8.0%
+     True                                        n= 680  mean +2.14%  median +3.92%  t +2.82  win 64%  | gross +7.4%
+ By year
+     2021                                        n=   3  (too few)
+     2022                                        n=  76  mean -2.29%  median +9.75%  t -0.54  win 68%  | gross +5.0%
+     2023                                        n= 157  mean +0.93%  median +4.38%  t +0.51  win 65%  | gross +6.2%
+     2024                                        n= 252  mean +2.33%  median +3.24%  t +1.95  win 62%  | gross +7.5%
+     2025                                        n= 230  mean +1.41%  median +4.21%  t +0.79  win 63%  | gross +6.4%

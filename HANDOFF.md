@@ -1,5 +1,12 @@
 # Handoff — Reverse-Split Shorting Strategy
 
+> **SHUT DOWN on 2026-10-03.** The Modal app is stopped and the scheduled GitHub
+> workflows are disabled. Everything below describes the system as it was on
+> 2026-09-05 and is kept for the record. Read
+> [`documents/summary.md`](documents/summary.md) first: what was tried, what the
+> rebuilt backtest showed, and why it was stopped. Running `modal deploy modal_app.py`
+> would turn live trading back on.
+
 _Last updated: 2026-09-05. Written to resume work in a fresh session with zero prior
 context. Supersedes the 2026-07-29 version, which described a dry-run system on a
 Windows laptop; that is no longer what this is._

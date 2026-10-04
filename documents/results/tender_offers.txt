@@ -1,0 +1,28 @@
+SC TO-I filings mentioning odd lots, Oct 2021 - Sep 2025: 166 | funds: 112
+operating companies, common stock, odd-lot priority, priced and dated: 33 {'2021': 2, '2022': 17, '2023': 8, '2024': 1, '2025': 5}
+ticker      filed          type     low    high   entry  prem_low  prem_high  days  profit99_low    cost99
+   ADT 2022-09-12         fixed    9.00    9.00    8.15     0.104      0.104    38         84.15    806.85
+  BSIG 2021-11-04         fixed   31.50   31.50   30.11     0.046      0.046    32        137.61   2980.89
+  CMLS 2022-05-06 dutch_auction   14.50   16.50   15.37    -0.057      0.074    25        -86.13   1521.63
+  SPLP 2022-04-08 dutch_auction   40.00   42.00   41.41    -0.034      0.014    28       -139.59   4099.59
+  TBPH 2022-09-28 dutch_auction    9.75   10.50   10.17    -0.041      0.032    43        -41.58   1006.83
+   WTM 2022-08-22 dutch_auction 1250.00 1400.00 1345.30    -0.071      0.041    29      -9434.70 133184.70
+   PRG 2021-11-04 dutch_auction   44.00   50.00   47.20    -0.068      0.059    29       -316.80   4672.80
+   HTH 2022-05-02 dutch_auction   28.00   32.00   29.45    -0.049      0.087    25       -143.55   2915.55
+  TNET 2022-02-17 dutch_auction   83.00   97.00   90.12    -0.079      0.076    28       -704.88   8921.88
+   IMO 2022-05-06 dutch_auction   62.00   78.00   52.03     0.192      0.499    32        987.03   5150.97
+  PMCB 2023-05-11         fixed    3.25    3.25    3.10     0.048      0.048    29         14.85    306.90
+   DBI 2023-06-08 dutch_auction    7.00    8.00    8.55    -0.181     -0.064    28       -153.45    846.45
+  CFNB 2022-11-15         fixed   16.00   16.00   16.15    -0.009     -0.009    29        -14.85   1598.85
+  TNET 2023-08-01         fixed  107.00  107.00  104.97     0.019      0.019    27        200.97  10392.03
+  IDCC 2023-01-23 dutch_auction   60.00   69.00   67.00    -0.104      0.030    25       -693.00   6633.00
+  TNET 2022-11-07 dutch_auction   63.00   72.00   67.20    -0.062      0.071    29       -415.80   6652.80
+   IMO 2022-11-04 dutch_auction   72.50   87.00   57.25     0.266      0.520    32       1509.75   5667.75
+ BBXIA 2022-11-22         fixed   10.00   10.00    9.40     0.064      0.064    62         59.40    930.60
+  CFNB 2023-10-23         fixed   16.50   16.50   17.00    -0.029     -0.029    42        -49.50   1683.00
+ BBXIA 2023-11-20         fixed    8.00    8.00    7.82     0.023      0.023    63         17.82    774.18
+  ATIP 2024-12-17         fixed    2.85    2.85    1.78     0.601      0.601    58        105.93    176.22
+  TORO 2025-07-10         fixed    2.75    2.75    2.58     0.066      0.066    28         16.83    255.42
+
+fixed-price offers bought below the offer: 8; profit on 99 shares total $638 (median $72), capital $791 for 35 days
+note: IMO's offers are priced in Canadian dollars and ATIP's entry price looks wrong; neither is a real profit.
